@@ -93,8 +93,8 @@ kwargs = {
             "avb=avb.main:main",
         ],
         'avb.models' : [
-            "exp=avb.models.exp.MultiExpModel",
-            "biexp=avb.models.exp.BiExpModel",
+            "exp=avb.models.exp:MultiExpModel",
+            "biexp=avb.models.exp:BiExpModel",
         ],
     },
     'classifiers' : [
