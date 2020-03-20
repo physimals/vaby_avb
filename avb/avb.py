@@ -71,33 +71,33 @@ class Posterior(LogBase):
 
         :return Tuple of (New means, New precisions)
         """
-        print("J", J.shape)
-        print("k", k.shape)
-        print("means", self.means.shape)
-        print("covars", self.covar.shape)
-        print("prec", self.precs.shape)
+        #print("J", J.shape)
+        #print("k", k.shape)
+        #print("means", self.means.shape)
+        #print("covars", self.covar.shape)
+        #print("prec", self.precs.shape)
         jt = J.transpose(0, 2, 1)
-        print("jt", jt.shape)
+        #print("jt", jt.shape)
         jtd = np.matmul(jt, J)
-        print("jtd", jtd.shape)
-        print("s", self.noise_s.shape)
-        print("c", self.noise_c.shape)
+        #print("jtd", jtd.shape)
+        #print("s", self.noise_s.shape)
+        #print("c", self.noise_c.shape)
         precs_new = self.noise_s[..., np.newaxis, np.newaxis]*self.noise_c[..., np.newaxis, np.newaxis]*jtd + prior.precs
         covar_new = np.linalg.inv(precs_new)
 
         t1 = np.einsum("ijk,ik->ij", J, self.means)
-        print("t1", t1.shape)
+        #print("t1", t1.shape)
         t15 = np.einsum("ijk,ik->ij", jt, (k + t1))
-        print("t15", t15.shape)
+        #print("t15", t15.shape)
         t2 = self.noise_s[..., np.newaxis] * self.noise_c[..., np.newaxis] * t15
-        print("t2", t2.shape)
-        print("pp", prior.precs.shape)
-        print("pm", prior.means.shape)
+        #print("t2", t2.shape)
+        #print("pp", prior.precs.shape)
+        #print("pm", prior.means.shape)
         t3 = np.einsum("ijk,ik->ij", prior.precs, prior.means)
-        print("t3", t3.shape)
-        print("cvn", covar_new.shape)
+        #print("t3", t3.shape)
+        #print("cvn", covar_new.shape)
         means_new = np.einsum("ijk,ik->ij", covar_new, (t2 + t3))
-        print("mn", means_new.shape)
+        #print("mn", means_new.shape)
         self.means = means_new
         self.precs = precs_new
         self.covar = np.linalg.inv(self.precs)
@@ -117,24 +117,26 @@ class Posterior(LogBase):
         nt = J.shape[1]
         nv = J.shape[0]
         c_new = np.zeros((nv,), dtype=np.float32)
-        c_new[:] = nt/2 + prior.noise_c
-        print("cov", self.covar.shape)
-        print("J", J.shape)
+        c_new[:] = (nt-1)/2 + prior.noise_c
+        #print("cov", self.covar.shape)
+        #print("J", J.shape)
         jt = J.transpose(0, 2, 1)
-        print("jt", jt.shape)
+        #print("jt", jt.shape)
         t1 = 1/2 * np.sum(np.square(k), axis=-1)
-        print("t1", t1.shape)
+        #print("t1", t1.shape)
         t12 = np.matmul(jt, J)
-        print("t12", t12.shape)
+        #print("t12", t12.shape)
         t15 = np.matmul(self.covar, np.matmul(jt, J))
-        print("t15", t15.shape)
+        #print("t15", t15.shape)
         t2 = 1/2 * np.trace(t15, axis1=-1, axis2=-2)
-        print("t2", t2.shape)
+        #print("t2", t2.shape)
         t0 = 1/prior.noise_s
         #print("t0", t0.shape)
         s_new = 1/(t0 + t1 + t2)
-        print("snew", s_new.shape)
-        print("cnew", c_new.shape)
+        #print("snew", s_new.shape)
+        #print("cnew", c_new.shape)
+        #print("nt, priorc", nt, prior.noise_c)
+        #print("c, s", c_new, s_new)
         self.noise_c = c_new
         self.noise_s = s_new
 
@@ -159,22 +161,39 @@ class Avb(LogBase):
         prior_means = [p.prior_dist.mean for p in model.params]
         prior_vars = [p.prior_dist.var for p in model.params]
         self._prior = Prior(prior_means, prior_vars, 
-                            kwargs.get("noise_s0", 1e-3), kwargs.get("noise_c0", 1000))
+                            kwargs.get("noise_s0", 1e6), kwargs.get("noise_c0", 1e-6))
 
         post_means = [p.post_dist.mean for p in model.params]
         post_vars = [p.post_dist.var for p in model.params]
         self._post = Posterior(self._nv, post_means, post_vars, 
-                               noise_s=kwargs.get("noise_s", 50), noise_c=kwargs.get("noise_c", 1e-8))
+                               noise_s=kwargs.get("noise_s", 1e-8), noise_c=kwargs.get("noise_c", 50.0))
+
+    def noise_mean_prec(self, dist):
+        return dist.noise_c*dist.noise_s, 1/(dist.noise_s*dist.noise_s*dist.noise_c)
 
     def run(self):
         self.log_iter(0)
 
         # Update model and noise parameters iteratively
         for idx in range(20):
-            print(self._post.means.shape)
+            #print(self._post.means.shape)
+            #print("Prior mean\n", self._prior.means)
+            #print("Prior precs\n", self._prior.precs)
+            #print("Post mean\n", self._post.means)
+            #print("Post precs\n", self._post.precs)
+            noise_mean, noise_prec = self.noise_mean_prec(self._prior)
+            #print("Noise prior mean\n", noise_mean)
+            #print("Noise prior prec\n", noise_prec)
+            noise_mean, noise_prec = self.noise_mean_prec(self._post)
+            #print("Noise post mean\n", noise_mean)
+            #print("Noise post prec\n", noise_prec)
             means_reshaped = self._post.means.transpose(1, 0)[..., np.newaxis]
             k = self._data - self._model.evaluate(means_reshaped, self._tpts)
             J = self._model.jacobian(means_reshaped, self._tpts)
+            #print("Jacobian\n", J)
+            #print("data\n", self._data)
+            #print("eval\n", self._model.evaluate(means_reshaped, self._tpts))
+            #print("k\n", k)
             self._post.update_model_params(k, J, self._prior)
             self._post.update_noise(k, J, self._prior)
             self.log_iter(idx+1)

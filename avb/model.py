@@ -125,7 +125,9 @@ class Model(LogBase):
         """
         nt = tpts.shape[1]
         nparams = len(params)
-        J = np.zeros([params[0].shape[0], nt, nparams], dtype=np.float32)
+        nv = params[0].shape[0]
+        J = np.zeros([nv, nt, nparams], dtype=np.float32)
+        #print("centre\n", params, params.shape)
         for param_idx, param_value in enumerate(params):
             plus = params.copy()
             minus = params.copy()
@@ -135,6 +137,9 @@ class Model(LogBase):
                 
             plus[param_idx] += delta
             minus[param_idx] -= delta
+            #print("param idx %i, delta %s" % (param_idx, delta))
+            #print(plus)
+            #print(minus)
             
             diff = self.evaluate(plus, tpts) - self.evaluate(minus, tpts)
             J[..., param_idx] = diff / (2*delta)
