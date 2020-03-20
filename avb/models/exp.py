@@ -33,6 +33,7 @@ class MultiExpModel(Model):
         return np.reduce_max(data, axis=1) / self._num_exps, None
 
     def evaluate(self, params, tpts):
+        print("ev", np.array(params).shape, tpts.shape)
         ret = None
         for idx in range(self._num_exps):
             amp = params[2*idx]

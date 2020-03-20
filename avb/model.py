@@ -94,18 +94,51 @@ class Model(LogBase):
         """
         Evaluate the model
 
+        :param params Sequence of parameter values arrays, one for each parameter.
+                      Each array is [W,1] array where W is the number of parameter vertices
+                      may be supplied as a [P,W,1] array where P is the number of
+                      parameters.
         :param tpts: Time values to evaluate the model at, supplied as an array of shape
                      [1,B] (if time values at each node are identical) or [W,B]
                      otherwise.
-        :param params Sequence of parameter values arrays, one for each parameter.
-                      Each array is [W,1] tensor where W is the number of parameter vertices
-                      may be supplied as a [P,W,1] array where P is the number of
-                      parameters.
 
         :return: [W, B] tensor containing model output at the specified time values
                  for each node
         """
         raise NotImplementedError("evaluate")
+
+    def jacobian(self, params, tpts):
+        """
+        Numerical differentiation to calculate Jacobian matrix
+        of partial derivatives of model prediction with respect to
+        parameters
+
+        :param params Sequence of parameter values arrays, one for each parameter.
+                      Each array is [W,1] array where W is the number of parameter vertices
+                      may be supplied as a [P,W,1] array where P is the number of
+                      parameters.
+        :param tpts: Time values to evaluate the model at, supplied as an array of shape
+                     [1,B] (if time values at each node are identical) or [W,B]
+                     otherwise.
+
+        :return: Jacobian matrix [W, B, P]
+        """
+        nt = tpts.shape[1]
+        nparams = len(params)
+        J = np.zeros([params[0].shape[0], nt, nparams], dtype=np.float32)
+        for param_idx, param_value in enumerate(params):
+            plus = params.copy()
+            minus = params.copy()
+            delta = param_value * 1e-5
+            delta[delta < 0] = -delta[delta < 0]
+            delta[delta < 1e-10] = 1e-10
+                
+            plus[param_idx] += delta
+            minus[param_idx] -= delta
+            
+            diff = self.evaluate(plus, tpts) - self.evaluate(minus, tpts)
+            J[..., param_idx] = diff / (2*delta)
+        return J
 
     def log_config(self, log=None):
         """
