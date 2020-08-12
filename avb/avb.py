@@ -4,7 +4,10 @@ nonlinear forward model
 
 This implements section 4 of the FMRIB Variational Bayes tutorial 1
 """
+import math
+
 import numpy as np
+from scipy.special import digamma, gammaln
 
 from .utils import LogBase
 
@@ -14,8 +17,8 @@ class Prior(LogBase):
         """
         :param means: Prior mean values [(W), P]
         :param variances: Prior variances [(W), P]
-        :param noise_s Prior noise shape parameter [(W)]
         :param noise_s Prior noise scale parameter [(W)]
+        :param noise_c Prior noise shape parameter [(W)]
         """
         LogBase.__init__(self)
         while np.array(means).ndim < 2:
@@ -36,8 +39,8 @@ class Posterior(LogBase):
         :param nv: Number of nodes
         :param init_means: Initial mean values [(W), P]
         :param init_variances: Initial variances [(W), P]
-        :param noise_s Initial noise shape parameter [(W)]
         :param noise_s Initial noise scale parameter [(W)]
+        :param noise_c Initial noise shape parameter [(W)]
         """
         LogBase.__init__(self)
         if np.array(init_means).ndim == 1:
@@ -65,39 +68,22 @@ class Posterior(LogBase):
         :param k: data - prediction
         :param means: means (prior = M0)
         :param precs: precisions (prior=P0)
-        :param noise_s: noise shape (prior = s0)
-        :param noise_c: noise scale (prior = c0)
+        :param noise_s: noise scale (prior = s0)
+        :param noise_c: noise shape (prior = c0)
         :param J: Jacobian matrix at parameter values
 
         :return Tuple of (New means, New precisions)
         """
-        #print("J", J.shape)
-        #print("k", k.shape)
-        #print("means", self.means.shape)
-        #print("covars", self.covar.shape)
-        #print("prec", self.precs.shape)
         jt = J.transpose(0, 2, 1)
-        #print("jt", jt.shape)
         jtd = np.matmul(jt, J)
-        #print("jtd", jtd.shape)
-        #print("s", self.noise_s.shape)
-        #print("c", self.noise_c.shape)
         precs_new = self.noise_s[..., np.newaxis, np.newaxis]*self.noise_c[..., np.newaxis, np.newaxis]*jtd + prior.precs
         covar_new = np.linalg.inv(precs_new)
 
         t1 = np.einsum("ijk,ik->ij", J, self.means)
-        #print("t1", t1.shape)
         t15 = np.einsum("ijk,ik->ij", jt, (k + t1))
-        #print("t15", t15.shape)
         t2 = self.noise_s[..., np.newaxis] * self.noise_c[..., np.newaxis] * t15
-        #print("t2", t2.shape)
-        #print("pp", prior.precs.shape)
-        #print("pm", prior.means.shape)
         t3 = np.einsum("ijk,ik->ij", prior.precs, prior.means)
-        #print("t3", t3.shape)
-        #print("cvn", covar_new.shape)
         means_new = np.einsum("ijk,ik->ij", covar_new, (t2 + t3))
-        #print("mn", means_new.shape)
         self.means = means_new
         self.precs = precs_new
         self.covar = np.linalg.inv(self.precs)
@@ -118,28 +104,69 @@ class Posterior(LogBase):
         nv = J.shape[0]
         c_new = np.zeros((nv,), dtype=np.float32)
         c_new[:] = (nt-1)/2 + prior.noise_c
-        #print("cov", self.covar.shape)
-        #print("J", J.shape)
         jt = J.transpose(0, 2, 1)
-        #print("jt", jt.shape)
-        t1 = 1/2 * np.sum(np.square(k), axis=-1)
-        #print("t1", t1.shape)
+        t1 = 0.5 * np.sum(np.square(k), axis=-1)
         t12 = np.matmul(jt, J)
-        #print("t12", t12.shape)
         t15 = np.matmul(self.covar, np.matmul(jt, J))
-        #print("t15", t15.shape)
-        t2 = 1/2 * np.trace(t15, axis1=-1, axis2=-2)
-        #print("t2", t2.shape)
+        t2 = 0.5 * np.trace(t15, axis1=-1, axis2=-2)
         t0 = 1/prior.noise_s
-        #print("t0", t0.shape)
         s_new = 1/(t0 + t1 + t2)
-        #print("snew", s_new.shape)
-        #print("cnew", c_new.shape)
-        #print("nt, priorc", nt, prior.noise_c)
-        #print("c, s", c_new, s_new)
         self.noise_c = c_new
         self.noise_s = s_new
 
+    def free_energy(self, k, J, prior):
+        Linv = self.covar
+        nv = J.shape[0]
+        nt = J.shape[1]
+        nparam = J.shape[2]
+
+        jt = J.transpose(0, 2, 1)
+
+        # Calculate individual parts of the free energy
+
+        # Bits arising from the factorised posterior for theta
+        expectedLogThetaDist = 0.5 * np.linalg.slogdet(self.precs)[1] - 0.5 * nparam * (np.log(2 * math.pi) + 1)
+
+        # Bits arising fromt he factorised posterior for phi
+        expectedLogPhiDist = -gammaln(self.noise_c) - self.noise_c * np.log(self.noise_s) - self.noise_c + (self.noise_c - 1) * (digamma(self.noise_c) + np.log(self.noise_s))
+
+        # Bits arising from the likelihood
+        expectedLogPosteriorParts = []
+
+        # nTimes using phi_{i+1} = Qis[i].Trace()
+        expectedLogPosteriorParts.append(
+            (digamma(self.noise_c) + np.log(self.noise_s)) * (nt * 0.5 + prior.noise_c - 1)
+        )
+
+        expectedLogPosteriorParts.append(
+            -gammaln(prior.noise_c) - prior.noise_c * np.log(prior.noise_s) - self.noise_s * self.noise_c / prior.noise_s
+        )
+
+        expectedLogPosteriorParts.append(
+            -0.5 * np.sum(np.square(k), axis=-1) - 0.5 * np.trace(np.matmul(np.matmul(jt, J), self.covar), axis1=-1, axis2=-2)
+        )
+
+        expectedLogPosteriorParts.append(
+            +0.5 * np.linalg.slogdet(prior.precs)[1]
+            - 0.5 * nt * np.log(2 * math.pi) - 0.5 * nparam * np.log(2 * math.pi)
+        )
+
+        expectedLogPosteriorParts.append(
+            -0.5
+            * np.matmul(
+                np.matmul(np.reshape(self.means - prior.means, (nv, 1, nparam)), prior.precs),
+                np.reshape(self.means - prior.means, (nv, nparam, 1))
+            )
+        )
+
+        expectedLogPosteriorParts.append(
+            -0.5 * np.trace(self.covar * prior.precs, axis1=-1, axis2=-2)
+        )
+
+        # Assemble the parts into F
+        F = -expectedLogThetaDist - expectedLogPhiDist + sum(expectedLogPosteriorParts)
+
+        return F
 
 class Avb(LogBase):
 
@@ -157,6 +184,7 @@ class Avb(LogBase):
         self._data = data
         self._nv, self._nt = tuple(data.shape)
         self._model = model
+        self._debug = kwargs.get("debug", False)
 
         prior_means = [p.prior_dist.mean for p in model.params]
         prior_vars = [p.prior_dist.var for p in model.params]
@@ -171,37 +199,54 @@ class Avb(LogBase):
     def noise_mean_prec(self, dist):
         return dist.noise_c*dist.noise_s, 1/(dist.noise_s*dist.noise_s*dist.noise_c)
 
+    def _debug_output(self, text, J=None):
+        if self._debug:
+            print(text)
+            print("Prior mean\n", self._prior.means)
+            print("Prior precs\n", self._prior.precs)
+            print("Post mean\n", self._post.means)
+            print("Post precs\n", self._post.precs)
+            noise_mean, noise_prec = self.noise_mean_prec(self._prior)
+            print("Noise prior mean\n", noise_mean)
+            print("Noise prior prec\n", noise_prec)
+            noise_mean, noise_prec = self.noise_mean_prec(self._post)
+            print("Noise post mean\n", noise_mean)
+            print("Noise post prec\n", noise_prec)
+            if J is not None:
+                print("Jacobian\n", J)
+            #print("data\n", self._data)
+            #print("eval\n", self._model.evaluate(means_reshaped, self._tpts))
+            #print("k\n", k)
+
     def run(self):
         self.log_iter(0)
 
         # Update model and noise parameters iteratively
-        for idx in range(20):
-            #print(self._post.means.shape)
-            #print("Prior mean\n", self._prior.means)
-            #print("Prior precs\n", self._prior.precs)
-            #print("Post mean\n", self._post.means)
-            #print("Post precs\n", self._post.precs)
-            noise_mean, noise_prec = self.noise_mean_prec(self._prior)
-            #print("Noise prior mean\n", noise_mean)
-            #print("Noise prior prec\n", noise_prec)
-            noise_mean, noise_prec = self.noise_mean_prec(self._post)
-            #print("Noise post mean\n", noise_mean)
-            #print("Noise post prec\n", noise_prec)
+        for idx in range(200):
+            orig_means = np.copy(self._post.means)
             means_reshaped = self._post.means.transpose(1, 0)[..., np.newaxis]
             k = self._data - self._model.evaluate(means_reshaped, self._tpts)
             J = self._model.jacobian(means_reshaped, self._tpts)
-            #print("Jacobian\n", J)
-            #print("data\n", self._data)
-            #print("eval\n", self._model.evaluate(means_reshaped, self._tpts))
-            #print("k\n", k)
+            self._debug_output("Start", J)
             self._post.update_model_params(k, J, self._prior)
+            self._debug_output("Updated theta", J)
+
+            # Follow Fabber in recalculating residuals after params change
+            # Note we don't recalculate J and nor does Fabber (until the
+            # end of the parameter updates when it re-centres the
+            # linearized model)
+            k = k + np.einsum("ijk,ik->ij", J, orig_means - self._post.means)
             self._post.update_noise(k, J, self._prior)
+            self._debug_output("Updated noise", J)
             self.log_iter(idx+1)
+            print("f=%f" % self._post.free_energy(k, J, self._prior))
 
     def log_iter(self, idx):
         c = np.mean(self._post.noise_c)
         s = np.mean(self._post.noise_s)
-        print("Iteration %i: params=%s, noise=%f,%f,%f" % (idx, np.mean(self._post.means, axis=0), s, c, s*c))
+        noise_mean, noise_prec = self.noise_mean_prec(self._post)
+        noise_mean, noise_prec = np.mean(noise_mean), np.mean(noise_prec)
+        print("Iteration %i: params=%s, noise: s=%e, c=%e, m=%e p=%e" % (idx, np.mean(self._post.means, axis=0), s, c, noise_mean, noise_prec))
 
 
 # Priors - noninformative because of high variance
