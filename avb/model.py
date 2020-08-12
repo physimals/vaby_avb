@@ -73,6 +73,28 @@ class Model(LogBase):
                 return idx
         raise ValueError("Parameter not found in model: %s" % name)
 
+    def inference_to_model(self, inference_params):
+        """
+        Transform inference engine parameters into model parameters
+
+        :param params: Inference engine parameters in shape [P, V, 1]
+        """
+        model_params = []
+        for idx, p in enumerate(inference_params):
+            model_params.append(self.params[idx].post_dist.transform.ext_values(p))
+        return model_params
+
+    def model_to_inference(self, model_params):
+        """
+        Transform inference engine parameters into model parameters
+
+        :param params: Inference engine parameters in shape [P, V, 1]
+        """
+        inference_params = []
+        for idx, p in enumerate(model_params):
+            inference_params.append(self.params[idx].post_dist.transform.int_values(p))
+        return inference_params
+
     def tpts(self):
         """
         Get the full set of timeseries time values
@@ -134,7 +156,7 @@ class Model(LogBase):
             delta = param_value * 1e-5
             delta[delta < 0] = -delta[delta < 0]
             delta[delta < 1e-10] = 1e-10
-                
+
             plus[param_idx] += delta
             minus[param_idx] -= delta
             #print("param idx %i, delta %s" % (param_idx, delta))

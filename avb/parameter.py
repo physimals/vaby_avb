@@ -20,12 +20,10 @@ def get_parameter(name, **kwargs):
     desc = kwargs.get("desc", "No description given")
     prior_dist = dist.get_dist(prefix="prior", **kwargs)
     prior_type = kwargs.get("prior_type", "N")
-
-    post_dist = dist.get_dist(prefix="post", **kwargs)
-    post_type = kwargs.get("post_type", "vertexwise")
+    post_dist = dist.get_dist(prefix="prior", **kwargs)
     post_init = kwargs.get("post_init", None)
 
-    return Parameter(name, desc=desc, prior=prior_dist, prior_type=prior_type, post=post_dist, post_init=post_init, post_type=post_type)
+    return Parameter(name, desc=desc, prior_dist=prior_dist, prior_type=prior_type, post_dist=post_dist, post_init=post_init)
 
 class Parameter(LogBase):
     """
@@ -37,7 +35,8 @@ class Parameter(LogBase):
         Constructor
 
         :param name: Parameter name
-        :param prior: Dist instance giving the parameter's prior distribution
+        :param prior_dist: Dist instance giving the parameter's prior distribution
+        :param post_dist: Dist instance giving the parameter's initial posterio distribution
         :param desc: Optional parameter description
 
         Keyword arguments (optional):
@@ -56,10 +55,9 @@ class Parameter(LogBase):
 
         self.name = name
         self.desc = kwargs.get("desc", "No description given")
-        self.prior_dist = kwargs.get("prior")
+        self.prior_dist = kwargs.get("prior_dist")
         self.prior_type = kwargs.get("prior_type", "N")
-        self.post_dist = kwargs.get("post", self.prior_dist)
-        self.post_type = kwargs.get("post_type", "vertexwise")
+        self.post_dist = kwargs.get("post_dist")
         self.post_init = kwargs.get("post_init", None)
 
     def __str__(self):

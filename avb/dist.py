@@ -11,7 +11,7 @@ def get_dist(prefix, **kwargs):
     """
     Factory method to return a distribution from options
     """
-    dist = kwargs.get("%s_dist" % prefix, kwargs.get("dist", "Normal"))
+    dist = kwargs.get("dist", "Normal")
     mean = kwargs.get("%s_mean" % prefix, kwargs.get("mean", 0.0))
     var = kwargs.get("%s_var" % prefix, kwargs.get("var", 1.0))
 

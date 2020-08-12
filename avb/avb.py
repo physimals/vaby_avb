@@ -224,6 +224,9 @@ class Avb(LogBase):
         # Update model and noise parameters iteratively
         for idx in range(200):
             orig_means = np.copy(self._post.means)
+
+            # Make means shape [P, V, 1] to enable the parameters
+            # to be unpacked as a sequence 
             means_reshaped = self._post.means.transpose(1, 0)[..., np.newaxis]
             k = self._data - self._model.evaluate(means_reshaped, self._tpts)
             J = self._model.jacobian(means_reshaped, self._tpts)

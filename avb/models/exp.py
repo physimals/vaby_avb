@@ -19,21 +19,21 @@ class MultiExpModel(Model):
             self.params += [
                 get_parameter("amp%i" % (idx+1), 
                               dist="Normal", mean=1.0,
-                              prior_var=1e3, post_var=1.0, 
+                              prior_var=1e2, post_var=1.0,
                               post_init=self._init_amp,
                               **options),
                 get_parameter("r%i" % (idx+1), 
-                              dist="Normal", mean=1.0, 
-                              prior_var=1e3, post_var=1.0,
+                              dist="LogNormal", mean=1.0,
+                              prior_var=1e2, post_var=1.0,
+                              post_mean=1.0,
                               **options),
             ]
-
 
     def _init_amp(self, _param, _t, data):
         return np.reduce_max(data, axis=1) / self._num_exps, None
 
     def evaluate(self, params, tpts):
-        #print("ev", np.array(params).shape, tpts.shape)
+        params = self.inference_to_model(params)
         ret = None
         for idx in range(self._num_exps):
             amp = params[2*idx]
