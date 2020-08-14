@@ -119,7 +119,6 @@ class Posterior(LogBase):
         nv = J.shape[0]
         nt = J.shape[1]
         nparam = J.shape[2]
-
         jt = J.transpose(0, 2, 1)
 
         # Calculate individual parts of the free energy
@@ -154,9 +153,11 @@ class Posterior(LogBase):
         expectedLogPosteriorParts.append(
             -0.5
             * np.matmul(
-                np.matmul(np.reshape(self.means - prior.means, (nv, 1, nparam)), prior.precs),
-                np.reshape(self.means - prior.means, (nv, nparam, 1))
-            )
+                np.matmul(
+                    np.reshape(self.means - prior.means, (nv, 1, nparam)), prior.precs),
+                    np.reshape(self.means - prior.means, (nv, nparam, 1)
+                )
+            ).reshape((nv,))
         )
 
         expectedLogPosteriorParts.append(
@@ -170,110 +171,151 @@ class Posterior(LogBase):
 
 class Avb(LogBase):
 
-    def __init__(self, tpts, data, model, **kwargs):
+    def __init__(self, tpts, data_model, fwd_model, **kwargs):
         """
         :param data: Data timeseries [(W), B]
         :param model: Forward model
         """
         LogBase.__init__(self)
-        while data.ndim < 2:
-            data = data[np.newaxis, ...]
         while tpts.ndim < 2:
             tpts = tpts[np.newaxis, ...]
         self._tpts = tpts
-        self._data = data
-        self._nv, self._nt = tuple(data.shape)
-        self._model = model
+        self._data_model = data_model
+        self._data = data_model.data_flattened
+        self._nv, self._nt = tuple(self._data.shape)
+        self.model = fwd_model
         self._debug = kwargs.get("debug", False)
+        self._maxits = kwargs.get("max_iterations", 10)
 
-        prior_means = [p.prior_dist.mean for p in model.params]
-        prior_vars = [p.prior_dist.var for p in model.params]
-        self._prior = Prior(prior_means, prior_vars, 
+        prior_means = [p.prior_dist.mean for p in self.model.params]
+        prior_vars = [p.prior_dist.var for p in self.model.params]
+        self.prior = Prior(prior_means, prior_vars,
                             kwargs.get("noise_s0", 1e6), kwargs.get("noise_c0", 1e-6))
 
-        post_means = [p.post_dist.mean for p in model.params]
-        post_vars = [p.post_dist.var for p in model.params]
-        self._post = Posterior(self._nv, post_means, post_vars, 
+        post_means = [p.post_dist.mean for p in self.model.params]
+        post_vars = [p.post_dist.var for p in self.model.params]
+        self.post = Posterior(self._nv, post_means, post_vars,
                                noise_s=kwargs.get("noise_s", 1e-8), noise_c=kwargs.get("noise_c", 50.0))
+
+        for idx, p in enumerate(self.model.params):
+            if p.post_init is not None:
+                mean, var = p.post_init(idx, tpts, self._data)
+                if mean is not None:
+                    self.post.means[:, idx] = mean
+                if var is not None:
+                    self.post.covar[:, idx, idx] = var
+                    self.post.precs = np.linalg.inv(self.post.covar)
 
     def noise_mean_prec(self, dist):
         return dist.noise_c*dist.noise_s, 1/(dist.noise_s*dist.noise_s*dist.noise_c)
 
     def _debug_output(self, text, J=None):
         if self._debug:
-            print(text)
-            print("Prior mean\n", self._prior.means)
-            print("Prior precs\n", self._prior.precs)
-            print("Post mean\n", self._post.means)
-            print("Post precs\n", self._post.precs)
-            noise_mean, noise_prec = self.noise_mean_prec(self._prior)
-            print("Noise prior mean\n", noise_mean)
-            print("Noise prior prec\n", noise_prec)
-            noise_mean, noise_prec = self.noise_mean_prec(self._post)
-            print("Noise post mean\n", noise_mean)
-            print("Noise post prec\n", noise_prec)
+            self.log.debug(text)
+            self.log.debug("Prior mean\n", self.prior.means)
+            self.log.debug("Prior precs\n", self.prior.precs)
+            self.log.debug("Post mean\n", self.post.means)
+            self.log.debug("Post precs\n", self.post.precs)
+            noise_mean, noise_prec = self.noise_mean_prec(self.prior)
+            self.log.debug("Noise prior mean\n", noise_mean)
+            self.log.debug("Noise prior prec\n", noise_prec)
+            noise_mean, noise_prec = self.noise_mean_prec(self.post)
+            self.log.debug("Noise post mean\n", noise_mean)
+            self.log.debug("Noise post prec\n", noise_prec)
             if J is not None:
-                print("Jacobian\n", J)
-            #print("data\n", self._data)
-            #print("eval\n", self._model.evaluate(means_reshaped, self._tpts))
-            #print("k\n", k)
+                self.log.debug("Jacobian\n", J)
+
+    def jacobian(self, params, tpts):
+        """
+        Numerical differentiation to calculate Jacobian matrix
+        of partial derivatives of model prediction with respect to
+        parameters
+
+        :param params Sequence of parameter values arrays, one for each parameter.
+                      Each array is [W,1] array where W is the number of parameter vertices
+                      may be supplied as a [P,W,1] array where P is the number of
+                      parameters.
+        :param tpts: Time values to evaluate the model at, supplied as an array of shape
+                     [1,B] (if time values at each node are identical) or [W,B]
+                     otherwise.
+
+        :return: Jacobian matrix [W, B, P]
+        """
+        nt = tpts.shape[1]
+        nparams = len(params)
+        nv = params[0].shape[0]
+        J = np.zeros([nv, nt, nparams], dtype=np.float32)
+        for param_idx, param_value in enumerate(params):
+            plus = params.copy()
+            minus = params.copy()
+            delta = param_value * 1e-5
+            delta[delta < 0] = -delta[delta < 0]
+            delta[delta < 1e-10] = 1e-10
+
+            plus[param_idx] += delta
+            minus[param_idx] -= delta
+
+            plus = self.model.inference_to_model(plus)
+            minus = self.model.inference_to_model(minus)
+            diff = self.model.evaluate(plus, tpts) - self.model.evaluate(minus, tpts)
+            J[..., param_idx] = diff / (2*delta)
+        return J
+
+    def _init_run(self):
+        self.model_means = None
+        self.model_vars = None
+        self.noise_means = None
+        self.noise_vars = None
+        self.modelfit = None
+        self.free_energy = -1e99
+        self.history = {}
 
     def run(self):
-        self.log_iter(0)
-
+        self._init_run()
         # Update model and noise parameters iteratively
-        for idx in range(200):
-            orig_means = np.copy(self._post.means)
+        for idx in range(self._maxits):
+            orig_means = np.copy(self.post.means)
 
             # Make means shape [P, V, 1] to enable the parameters
             # to be unpacked as a sequence 
-            means_reshaped = self._post.means.transpose(1, 0)[..., np.newaxis]
-            k = self._data - self._model.evaluate(means_reshaped, self._tpts)
-            J = self._model.jacobian(means_reshaped, self._tpts)
-            self._debug_output("Start", J)
-            self._post.update_model_params(k, J, self._prior)
+            means_trans = self.post.means.transpose(1, 0)
+            self.model_means = self.model.inference_to_model(means_trans)
+            self.model_vars = np.array([self.post.covar[:, v, v] for v in range(len(self.model.params))]) # fixme transform
+            self.modelfit = self.model.evaluate(self.model_means[..., np.newaxis], self._tpts)
+            self.noise_means, self.noise_precs = self.noise_mean_prec(self.post)
+            self.noise_vars = 1.0/self.noise_precs
+            k = self._data - self.modelfit
+            J = self.jacobian(means_trans[..., np.newaxis], self._tpts)
+            self.free_energy = self.post.free_energy(k, J, self.prior)
+            if idx == 0:
+                self._log_iter(idx)
+                self._debug_output("Start", J)
+            self.post.update_model_params(k, J, self.prior)
             self._debug_output("Updated theta", J)
 
             # Follow Fabber in recalculating residuals after params change
             # Note we don't recalculate J and nor does Fabber (until the
-            # end of the parameter updates when it re-centres the
-            # linearized model)
-            k = k + np.einsum("ijk,ik->ij", J, orig_means - self._post.means)
-            self._post.update_noise(k, J, self._prior)
+            # end of the parameter updates when it re-centres the linearized model)
+            k = k + np.einsum("ijk,ik->ij", J, orig_means - self.post.means)
+            self.post.update_noise(k, J, self.prior)
             self._debug_output("Updated noise", J)
-            self.log_iter(idx+1)
-            print("f=%f" % self._post.free_energy(k, J, self._prior))
+            self._log_iter(idx+1)
+        for item, history in self.history.items():
+            # Reshape history items so history is in last axis not first
+            print(item)
+            #print(history)
+            #print(history[0])
+            trans_axes = list(range(1, history[0].ndim+1)) + [0,]
+            print(np.array(history).shape)
+            print(trans_axes)
+            self.history[item] = np.array(history).transpose(trans_axes)
 
-    def log_iter(self, idx):
-        c = np.mean(self._post.noise_c)
-        s = np.mean(self._post.noise_s)
-        noise_mean, noise_prec = self.noise_mean_prec(self._post)
-        noise_mean, noise_prec = np.mean(noise_mean), np.mean(noise_prec)
-        print("Iteration %i: params=%s, noise: s=%e, c=%e, m=%e p=%e" % (idx, np.mean(self._post.means, axis=0), s, c, noise_mean, noise_prec))
-
-
-# Priors - noninformative because of high variance
-#
-# Note that the noise posterior is a gamma distribution
-# with shape and scale parameters s, c. The mean here is
-# b*c and the variance is c * b^2. To make this more 
-# intuitive we define a prior mean and variance for the 
-# noise parameter BETA and express the prior scale
-# and shape parameters in terms of these
-#
-# So long as the priors stay noninformative they should not 
-# have a big impact on the inferred values - this is the 
-# point of noninformative priors. However if you start to
-# reduce the prior variances the inferred values will be
-# drawn towards the prior values and away from the values
-# suggested by the data
-a0 = 1.0
-a_var0 = 1000
-lam0 = 1.0
-lam_var0 = 10.0
-
-noise_mean0 = 1
-noise_var0 = 1000
-# c=scale, s=shape parameters for Gamma distribution
-noise_c0 = noise_var0 / noise_mean0
-noise_s0 = noise_mean0**2 / noise_var0
+    def _log_iter(self, iter):
+        fmt = {"iter" : iter}
+        for attr in ("model_means", "model_vars", "noise_means", "noise_vars", "free_energy"):
+            voxelwise_data = getattr(self, attr)
+            mean_data = np.mean(voxelwise_data, axis=-1)
+            fmt[attr] = mean_data
+            if attr not in self.history: self.history[attr] = []
+            self.history[attr].append(voxelwise_data)
+        self.log.info("Iteration %(iter)i: params=%(model_means)s, vars=%(model_vars)s, noise mean=%(noise_means)e, var=%(noise_vars)e, F=%(free_energy)e" % fmt)
