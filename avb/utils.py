@@ -18,3 +18,6 @@ class LogBase(object):
     def __init__(self, **kwargs):
         self.log = logging.getLogger(type(self).__name__)
 
+    def log_tf(self, tensor, *args, **kwargs):
+        self.log.debug("%s: shape=%s", (kwargs.get("name", "tensor"), tensor.shape))
+        return tensor
