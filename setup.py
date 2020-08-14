@@ -95,6 +95,7 @@ kwargs = {
         'avb.models' : [
             "exp=avb.models.exp:MultiExpModel",
             "biexp=avb.models.exp:BiExpModel",
+            "aslrest=avb.models.aslrest:AslRestModel",
         ],
     },
     'classifiers' : [
