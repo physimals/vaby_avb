@@ -302,12 +302,7 @@ class Avb(LogBase):
             self._log_iter(idx+1)
         for item, history in self.history.items():
             # Reshape history items so history is in last axis not first
-            print(item)
-            #print(history)
-            #print(history[0])
             trans_axes = list(range(1, history[0].ndim+1)) + [0,]
-            print(np.array(history).shape)
-            print(trans_axes)
             self.history[item] = np.array(history).transpose(trans_axes)
 
     def _log_iter(self, iter):
