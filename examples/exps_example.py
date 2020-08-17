@@ -10,7 +10,7 @@ import sys
 import numpy as np
 import nibabel as nib
 
-from avb import get_model_class, main
+from avb import get_model_class, run
 
 # This starts the random number generator off with the same seed value
 # each time, so the results are repeatable. However it is worth changing
@@ -35,9 +35,7 @@ DT = 2.0 / N
 NX, NY, NZ = 10, 10, 10
 t = np.array([float(t)*DT for t in range(N)])
 params_voxelwise = np.tile(np.array(PARAMS_TRUTH)[..., np.newaxis, np.newaxis], (1, NX*NY*NZ, 1))
-print(params_voxelwise.shape)
 DATA_CLEAN = model.evaluate(model.model_to_inference(params_voxelwise), t)
-print(DATA_CLEAN.shape)
 DATA_NOISY = DATA_CLEAN + np.random.normal(0, NOISE_STD_TRUTH, DATA_CLEAN.shape)
 niidata = DATA_NOISY.reshape((NX, NY, NZ, N))
 nii = nib.Nifti1Image(niidata, np.identity(4))
@@ -47,4 +45,14 @@ nii.to_filename("data_exp_noisy.nii.gz")
 #import os
 #os.system("fabber_exp --data=data_exp_noisy  --max-iterations=200 --output=exps_example_fabber_out --dt=%.3f --model=exp --num-exps=1 --method=vb --noise=white --overwrite" % DT)
 
-runtime, avb = run("data_exp_noisy.nii.gz", model, "exps_example_out", **options)
+options = {
+    "dt" : DT,
+    "save_mean" : True,
+    "save_free_energy" : True,
+    "save_model_fit" : True,
+    "save_log" : True,
+    "log_stream" : sys.stdout,
+    "max_iterations" : 100,
+}
+
+runtime, avb = run("data_exp_noisy.nii.gz", "exp", "exps_example_out", **options)
