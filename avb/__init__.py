@@ -7,6 +7,7 @@ except ImportError:
 from .avb import Avb
 from .data_model import DataModel
 from .model import Model, get_model_class
+from .main import run
 
 __all__ = [   "__version__",
     "__timestamp__",
@@ -14,4 +15,5 @@ __all__ = [   "__version__",
     "DataModel",
     "Model",
     "get_model_class",
+    "run",
 ]
