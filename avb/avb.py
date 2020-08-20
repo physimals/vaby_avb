@@ -7,9 +7,10 @@ This implements section 4 of the FMRIB Variational Bayes tutorial 1
 import math
 
 import numpy as np
-from scipy.special import digamma, gammaln
+import scipy.special
+import tensorflow as tf
 
-from .utils import LogBase
+from svb.utils import LogBase
 
 class Prior(LogBase):
 
@@ -25,9 +26,9 @@ class Prior(LogBase):
             means = np.array(means)[np.newaxis, ...]
         while np.array(variances).ndim < 2:
             variances = np.array(variances)[np.newaxis, ...]
-        self.means = means
-        self.variances = variances
-        self.covar = np.array([np.diag(v) for v in variances])
+        self.means = np.array(means, dtype=np.float32)
+        self.variances = np.array(variances, dtype=np.float32)
+        self.covar = np.array([np.diag(v) for v in variances], dtype=np.float32)
         self.precs = np.linalg.inv(self.covar)
         self.noise_s = noise_s
         self.noise_c = noise_c
@@ -53,11 +54,11 @@ class Posterior(LogBase):
         if np.array(noise_c).ndim == 0:
             noise_c = np.tile(np.atleast_1d(noise_c), (nv, ))
 
-        self.means = np.array(init_means)
-        self.covar = np.array([np.diag(v) for v in init_variances])
+        self.means = np.array(init_means, dtype=np.float32)
+        self.covar = np.array([np.diag(v) for v in init_variances], dtype=np.float32)
         self.precs = np.linalg.inv(self.covar)
-        self.noise_s = noise_s
-        self.noise_c = noise_c
+        self.noise_s = np.array(noise_s, dtype=np.float32)
+        self.noise_c = np.array(noise_c, dtype=np.float32)
 
     def update_model_params(self, k, J, prior):
         """
@@ -127,18 +128,18 @@ class Posterior(LogBase):
         expectedLogThetaDist = 0.5 * np.linalg.slogdet(self.precs)[1] - 0.5 * nparam * (np.log(2 * math.pi) + 1)
 
         # Bits arising fromt he factorised posterior for phi
-        expectedLogPhiDist = -gammaln(self.noise_c) - self.noise_c * np.log(self.noise_s) - self.noise_c + (self.noise_c - 1) * (digamma(self.noise_c) + np.log(self.noise_s))
+        expectedLogPhiDist = -scipy.special.gammaln(self.noise_c) - self.noise_c * np.log(self.noise_s) - self.noise_c + (self.noise_c - 1) * (scipy.special.digamma(self.noise_c) + np.log(self.noise_s))
 
         # Bits arising from the likelihood
         expectedLogPosteriorParts = []
 
         # nTimes using phi_{i+1} = Qis[i].Trace()
         expectedLogPosteriorParts.append(
-            (digamma(self.noise_c) + np.log(self.noise_s)) * (nt * 0.5 + prior.noise_c - 1)
+            (scipy.special.digamma(self.noise_c) + np.log(self.noise_s)) * (nt * 0.5 + prior.noise_c - 1)
         )
 
         expectedLogPosteriorParts.append(
-            -gammaln(prior.noise_c) - prior.noise_c * np.log(prior.noise_s) - self.noise_s * self.noise_c / prior.noise_s
+            -scipy.special.gammaln(prior.noise_c) - prior.noise_c * np.log(prior.noise_s) - self.noise_s * self.noise_c / prior.noise_s
         )
 
         expectedLogPosteriorParts.append(
@@ -179,7 +180,7 @@ class Avb(LogBase):
         LogBase.__init__(self)
         while tpts.ndim < 2:
             tpts = tpts[np.newaxis, ...]
-        self._tpts = tpts
+        self._tpts = np.array(tpts, dtype=np.float32)
         self._data_model = data_model
         self._data = data_model.data_flattened
         self._nv, self._nt = tuple(self._data.shape)
@@ -201,11 +202,12 @@ class Avb(LogBase):
             if p.post_init is not None:
                 mean, var = p.post_init(idx, tpts, self._data)
                 if mean is not None:
-                    self.post.means[:, idx] = mean
+                    self.post.means[:, idx] = self._model_to_inference(mean, idx)
                 if var is not None:
+                    # FIXME transform
                     self.post.covar[:, idx, idx] = var
                     self.post.precs = np.linalg.inv(self.post.covar)
-
+        
     def noise_mean_prec(self, dist):
         return dist.noise_c*dist.noise_s, 1/(dist.noise_s*dist.noise_s*dist.noise_c)
 
@@ -250,13 +252,13 @@ class Avb(LogBase):
             minus = params.copy()
             delta = param_value * 1e-5
             delta[delta < 0] = -delta[delta < 0]
-            delta[delta < 1e-10] = 1e-10
+            delta[delta < 1e-5] = 1e-5
 
             plus[param_idx] += delta
             minus[param_idx] -= delta
 
-            plus = self.model.inference_to_model(plus)
-            minus = self.model.inference_to_model(minus)
+            plus = self._inference_to_model(plus)
+            minus = self._inference_to_model(minus)
             diff = self.model.evaluate(plus, tpts) - self.model.evaluate(minus, tpts)
             J[..., param_idx] = diff / (2*delta)
         return J
@@ -270,25 +272,69 @@ class Avb(LogBase):
         self.free_energy = -1e99
         self.history = {}
 
-    def run(self):
+    def _evaluate(self, params, tpts):
+        # Make means shape [P, V, 1] to enable the parameters
+        # to be unpacked as a sequence 
+        self.means_trans = params.transpose((1, 0))
+        self.model_means = self._inference_to_model(self.means_trans)
+        self.model_vars = np.array([self.post.covar[:, v, v] for v in range(len(self.model.params))]) # fixme transform
+        modelfit = self.model.evaluate(self.model_means[..., np.newaxis], tpts)
+        J = self.jacobian(self.means_trans[..., np.newaxis], self._tpts)
+        return modelfit, J
+
+    def _inference_to_model(self, inference_params, idx=None):
+        """
+        Transform inference engine parameters into model parameters
+
+        :param params: Inference engine parameters in shape [P, V, 1]
+        """
+        if idx is None:
+            model_params = []
+            for idx, p in enumerate(inference_params):
+                model_params.append(self.model.params[idx].post_dist.transform.ext_values(p, ns=np))
+            return tf.stack(model_params)
+        else:
+            return self.model.params[idx].post_dist.transform.ext_values(inference_params, ns=np)
+
+    def _model_to_inference(self, model_params, idx=None):
+        """
+        Transform inference engine parameters into model parameters
+
+        :param params: Inference engine parameters in shape [P, V, 1]
+        """
+        if idx is None:
+            inference_params = []
+            for idx, p in enumerate(model_params):
+                inference_params.append(self.model.params[idx].post_dist.transform.int_values(p, ns=np))
+            return tf.stack(model_params)
+        else:
+            return self.model.params[idx].post_dist.transform.int_values(model_params, ns=np)
+
+    def run(self, history=False):
         self._init_run()
         # Update model and noise parameters iteratively
         for idx in range(self._maxits):
             orig_means = np.copy(self.post.means)
 
-            # Make means shape [P, V, 1] to enable the parameters
-            # to be unpacked as a sequence 
-            means_trans = self.post.means.transpose(1, 0)
-            self.model_means = self.model.inference_to_model(means_trans)
-            self.model_vars = np.array([self.post.covar[:, v, v] for v in range(len(self.model.params))]) # fixme transform
-            self.modelfit = self.model.evaluate(self.model_means[..., np.newaxis], self._tpts)
+            #print(self.post.means.shape)
+            #print(self._tpts.shape)
+            #jac = jacobian(self._modelfit) 
+            #print(jac)
+            #print(jacobian(self._modelfit)(self.post.means, self._tpts))
+            #print(jac(self.post.means[0, ...], self._tpts[0, ...]))
+            #J = [np.squeeze(jac(self.post.means[v, ...][np.newaxis, ...], self._tpts[0, ...][np.newaxis, ...])) for v in range(self.post.means.shape[0])]
+            #print(J[0].shape)
+            #J = np.stack(J)
+            #J = jacobian(self._modelfit)(self.post.means, self._tpts)
+            #print(J.shape)
+            self.modelfit, J = self._evaluate(self.post.means, self._tpts)
             self.noise_means, self.noise_precs = self.noise_mean_prec(self.post)
             self.noise_vars = 1.0/self.noise_precs
             k = self._data - self.modelfit
-            J = self.jacobian(means_trans[..., np.newaxis], self._tpts)
+            #print(J.shape)
             self.free_energy = self.post.free_energy(k, J, self.prior)
             if idx == 0:
-                self._log_iter(idx)
+                self._log_iter(idx, history)
                 self._debug_output("Start", J)
             self.post.update_model_params(k, J, self.prior)
             self._debug_output("Updated theta", J)
@@ -299,18 +345,21 @@ class Avb(LogBase):
             k = k + np.einsum("ijk,ik->ij", J, orig_means - self.post.means)
             self.post.update_noise(k, J, self.prior)
             self._debug_output("Updated noise", J)
-            self._log_iter(idx+1)
-        for item, history in self.history.items():
-            # Reshape history items so history is in last axis not first
-            trans_axes = list(range(1, history[0].ndim+1)) + [0,]
-            self.history[item] = np.array(history).transpose(trans_axes)
+            self._log_iter(idx+1, history)
 
-    def _log_iter(self, iter):
+        if history:
+            for item, history in self.history.items():
+                # Reshape history items so history is in last axis not first
+                trans_axes = list(range(1, history[0].ndim+1)) + [0,]
+                self.history[item] = np.array(history).transpose(trans_axes)
+
+    def _log_iter(self, iter, history):
         fmt = {"iter" : iter}
         for attr in ("model_means", "model_vars", "noise_means", "noise_vars", "free_energy"):
             voxelwise_data = getattr(self, attr)
             mean_data = np.mean(voxelwise_data, axis=-1)
             fmt[attr] = mean_data
             if attr not in self.history: self.history[attr] = []
-            self.history[attr].append(voxelwise_data)
+            if history:
+                self.history[attr].append(voxelwise_data)
         self.log.info("Iteration %(iter)i: params=%(model_means)s, vars=%(model_vars)s, noise mean=%(noise_means)e, var=%(noise_vars)e, F=%(free_energy)e" % fmt)

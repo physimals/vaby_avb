@@ -2,10 +2,7 @@
 #
 # This example uses the sample multi-PLD data from the FSL course
 import sys
-import os
-import math
 
-import numpy as np
 import matplotlib.pyplot as plt
 import nibabel as nib
 
@@ -23,8 +20,8 @@ options = {
     "inferart" : True,
     "save_mean" : True,
     "save_noise" : True,
-    "save_param_history" : True,
-    "save_free_energy_history" : True,
+    #"save_param_history" : True,
+    #"save_free_energy_history" : True,
     "save_runtime" : True,
     "save_free_energy" : True,
     "save_model_fit" : True,
@@ -35,6 +32,7 @@ options = {
 }
 
 # Run fabber as a comparison if desired
+#import os
 #os.system("fabber_asl --model=aslrest --method=vb --noise=white --data=asldata_diff --mask=asldata_mask --max-iterations=20 --incart --inferart --tau=1.8 --casl --batsd=1.0 --bat=1.3 --ti1=2.05 --ti2=2.3 --ti3=2.55 --ti4=2.8 --ti5=3.05 --ti6=3.3 --slicedt=0.0454 --inctiss --infertiss --repeats=8 --output=asl_example_fabber_out --incbat --inferbat --overwrite --save-model-fit")
 
 runtime, avb = run("asldata_diff.nii.gz", model, outdir, mask="asldata_mask.nii.gz", **options)
@@ -47,4 +45,3 @@ plt.imshow(ftiss_img[:, :, 10].squeeze())
 plt.figure("delt")
 plt.imshow(delttiss_img[:, :, 10].squeeze())
 plt.show()
-

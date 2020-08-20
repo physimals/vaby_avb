@@ -13,11 +13,12 @@ import logging.config
 import argparse
 import re
 
-import numpy as np
 import nibabel as nib
+import numpy as np
 
-from . import __version__, DataModel, Avb, get_model_class
-from .utils import ValueList
+from . import __version__, Avb
+from svb.utils import ValueList
+from svb import DataModel, get_model_class
 
 USAGE = "avb <options>"
 
@@ -211,9 +212,9 @@ def run(data, model_name, output, mask=None, **kwargs):
     if tpts.ndim > 1 and tpts.shape[0] > 1:
         tpts = tpts[data_model.mask_flattened > 0]
 
-    # Train model
+    history = kwargs.get("save_free_energy_history", False) or kwargs.get("save_param_history", False)
     avb = Avb(tpts, data_model, fwd_model, **kwargs)
-    runtime, _ret = _runtime(avb.run)
+    runtime, _ret = _runtime(avb.run, history=history)
     log.info("DONE: %.3fs", runtime)
 
     _makedirs(output, exist_ok=True)
