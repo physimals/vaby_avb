@@ -81,7 +81,6 @@ class Avb(LogBase):
         :return: Jacobian matrix [W, B, P]
         """
         nt = tpts.shape[1]
-        print(params)
         nparams = tf.shape(params)[0]
         nv = tf.shape(params)[1]
         J = []
@@ -90,12 +89,10 @@ class Avb(LogBase):
             delta = param_value * 1e-5
             delta = tf.math.abs(delta)
             delta = tf.where(delta < 1e-5, tf.fill(tf.shape(delta), 1e-5), delta)
-            
-            plus = tf.where(tf.range(len(self.model.params)) == param_idx,
-                            params + delta, params)
 
-            minus = tf.where(tf.range(len(self.model.params)) == param_idx,
-                             params - delta, params)
+            pick_param = tf.equal(tf.range(len(self.model.params)), param_idx)
+            plus = tf.where(pick_param, params + delta, params)
+            minus = tf.where(pick_param, params - delta, params)
 
             plus = self._inference_to_model(plus)
             minus = self._inference_to_model(minus)
@@ -172,23 +169,21 @@ class Avb(LogBase):
         self.k_new = self.k + tf.einsum("ijk,ik->ij", self.J, self.post.means - self.new_means)
         self.noise_c_new, self.noise_s_new = self.post.update_noise(self.k_new, self.J, self.prior)
         
-        self.update_theta = [
-            self.post.means.assign(self.sess.run(self.new_means)),
-            self.post.covar.assign(self.sess.run(self.new_cov))
-        ]
-        self.update_noise = [
-            self.post.noise_c.assign(self.sess.run(self.noise_c_new)),
-            self.post.noise_s.assign(self.sess.run(self.noise_s_new))
-        ]
-
         self._log_iter(0, history)
         self._debug_output("Start", self.J)
         # Update model and noise parameters iteratively
         for idx in range(self._maxits):
-            #print(self.sess.run(self.new_cov))
+            self.update_theta = [
+                self.post.means.assign(self.sess.run(self.new_means)),
+                self.post.covar.assign(self.sess.run(self.new_cov))
+            ]
             self.sess.run(self.update_theta)
-            #print(self.sess.run(self.new_cov))
-            self._debug_output("Updated theta", self.J)
+            self._debug_output("Updated theta", self.J) 
+            self.update_noise = [
+                self.post.noise_c.assign(self.sess.run(self.noise_c_new)),
+                self.post.noise_s.assign(self.sess.run(self.noise_s_new))
+            ]
+
             self.sess.run(self.update_noise)
             self._debug_output("Updated noise", self.J)
             self._log_iter(idx+1, history)
