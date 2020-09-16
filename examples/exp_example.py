@@ -35,7 +35,7 @@ model = svb.get_model_class("exp")(None)
 N = 100
 DT = 0.02
 t = np.array([float(t)*DT for t in range(N)])
-DATA_CLEAN = model.evaluate(PARAMS_TRUTH, t)
+DATA_CLEAN = model.ievaluate(PARAMS_TRUTH, t)
 DATA_NOISY = DATA_CLEAN + np.random.normal(0, NOISE_STD_TRUTH, [N])
 print("Data samples are:")
 print(t)
@@ -57,5 +57,5 @@ handler.setFormatter(logging.Formatter('%(levelname)s : %(message)s'))
 logging.getLogger().addHandler(handler)
 
 # Run AVB inference
-avb = Avb(t, svb.DataModel(DATA_NOISY.numpy()), model, debug="--debug" in sys.argv, max_iterations=20)
+avb = Avb(t, svb.DataModel(DATA_NOISY), model, debug="--debug" in sys.argv, max_iterations=20)
 avb.run()
