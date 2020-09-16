@@ -1,0 +1,28 @@
+INFO:avb.main:AVB 0.0.1.post17
+INFO:DataModel:Loaded data from data_exp_noisy.nii.gz
+INFO:ExpModel:Model: Exponential model: 0.0.2.post120
+INFO:ExpModel: - Time separation between volumes: 0.02
+INFO:ExpModel: - Time offset for first volume: 0.0
+INFO:Avb:Iteration 0: params=[1. 1.], vars=[0.4054651 0.4054651], noise mean=5.000001e-07, var=5.000000e-15, F=-3.850753e+04
+INFO:Avb:Iteration 1: params=[1. 1.], vars=[0.4054651 0.4054651], noise mean=5.000001e-07, var=5.000000e-15, F=-3.850753e+04
+INFO:Avb:Iteration 2: params=[1.00920657 0.99494275], vars=[13.813114 13.814605], noise mean=1.307136e-03, var=3.453536e-08, F=-3.833231e+04
+INFO:Avb:Iteration 3: params=[4.50306797e+06 1.75678869e-04], vars=[ 9.6931223  12.06853822], noise mean=3.141123e-03, var=1.996224e-07, F=-1.089230e+16
+INFO:Avb:Iteration 4: params=[1.65657971e+06 1.72857031e-04], vars=[2.41419938e-13 2.81148965e-06], noise mean=3.495920e-06, var=3.765183e-13, F=-1.379341e+14
+INFO:Avb:Iteration 5: params=[6.09430271e+05 1.17435546e-03], vars=[2.28100304e-09 4.47503138e-02], noise mean=2.657224e-05, var=1.455129e-11, F=-1.867517e+13
+INFO:Avb:Iteration 6: params=[2.24205132e+05 3.17042281e-03], vars=[1.49018299e-09 4.29745056e-02], noise mean=1.043138e-04, var=2.522970e-10, F=-2.527120e+12
+INFO:Avb:Iteration 7: params=[8.24914104e+04 5.18483629e-03], vars=[3.53004093e-09 8.07032294e-02], noise mean=1.091753e-03, var=2.476504e-08, F=-3.415037e+11
+INFO:Avb:Iteration 8: params=[3.03572418e+04 5.19893661e-03], vars=[2.13739367e-09 2.17815966e-02], noise mean=3.510767e-03, var=2.694475e-07, F=-4.608568e+10
+INFO:Avb:Iteration 9: params=[1.11790956e+04 5.39411384e-03], vars=[6.14404037e-09 7.74712184e-02], noise mean=1.361442e-02, var=4.111476e-06, F=-6.228316e+09
+INFO:Avb:Iteration 10: params=[4.12445790e+03 6.37838274e-03], vars=[1.37389450e-08 5.63443083e-02], noise mean=2.109334e-02, var=9.854625e-06, F=-8.391917e+08
+INFO:Avb:Iteration 11: params=[1.53126826e+03 1.75630364e-02], vars=[1.03260184e-07 6.19535405e-02], noise mean=5.001394e-02, var=5.429870e-05, F=-1.107655e+08
+INFO:Avb:Iteration 12: params=[5.78127764e+02 3.05084270e-02], vars=[3.67942983e-07 2.88057794e-03], noise mean=8.770215e-02, var=1.584294e-04, F=-1.446946e+07
+INFO:Avb:Iteration 13: params=[2.27875133e+02 6.59226775e-02], vars=[1.43336728e-06 1.81539879e-03], noise mean=9.243312e-02, var=1.761407e-04, F=-1.772213e+06
+INFO:Avb:Iteration 14: params=[100.01645243   0.15124629], vars=[9.06330099e-06 1.92556569e-03], noise mean=9.544530e-02, var=1.877245e-04, F=-1.819940e+05
+INFO:Avb:Iteration 15: params=[55.37033319  0.3069915 ], vars=[4.91149141e-05 1.97668179e-03], noise mean=9.880456e-02, var=2.011675e-04, F=-1.195992e+04
+INFO:Avb:Iteration 16: params=[43.23176479  0.45872127], vars=[0.0001763  0.00201116], noise mean=1.010817e-01, var=2.105404e-04, F=-8.896040e+02
+INFO:Avb:Iteration 17: params=[42.006619    0.49935675], vars=[0.00031877 0.0019625 ], noise mean=1.014063e-01, var=2.118836e-04, F=-7.289738e+02
+INFO:Avb:Iteration 18: params=[42.00557438  0.5003426 ], vars=[0.00034736 0.00190365], noise mean=1.014205e-01, var=2.119435e-04, F=-7.292354e+02
+INFO:Avb:Iteration 19: params=[42.00549326  0.50033969], vars=[0.00034758 0.00189952], noise mean=1.014208e-01, var=2.119447e-04, F=-7.292297e+02
+INFO:Avb:Iteration 20: params=[42.0059331   0.50035498], vars=[0.00034759 0.00189984], noise mean=1.014209e-01, var=2.119449e-04, F=-7.292318e+02
+INFO:avb.main:DONE: 2.899s
+INFO:avb.main:Output written to: exps_example_out
