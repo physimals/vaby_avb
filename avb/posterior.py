@@ -36,7 +36,7 @@ class MVNPosterior(LogBase):
 
         for idx, p in enumerate(params):
             mean, var = None, None
-            if False and p.post_init is not None: # FIXME
+            if False and p.post_init is not None: # FIXME initialization disabled
                 mean, var = p.post_init(idx, tpts, data_model.data_flattened)
                 if mean is not None:
                     mean = p.post_dist.transform.int_values(mean, ns=np)
@@ -47,8 +47,6 @@ class MVNPosterior(LogBase):
                 mean = np.full((nv, ), p.post_dist.mean, dtype=np.float32)
             if var is None:
                 var = np.full((nv, ), p.post_dist.var, dtype=np.float32)
-            print(mean.shape)
-            print(var.shape)
             init_means.append(mean)
             init_variances.append(var)
 
@@ -57,13 +55,12 @@ class MVNPosterior(LogBase):
         init_variances = np.array(init_variances).transpose()
             
         init_noise_s = kwargs.get("noise_s", 1e-8)
-        init_noise_c = kwargs.get("noise_s", 1e-8)
+        init_noise_c = kwargs.get("noise_c", 50.0)
         if np.array(init_noise_s).ndim == 0:
             init_noise_s = np.full((nv, ), init_noise_s)
         if np.array(init_noise_c).ndim == 0:
             init_noise_c = np.full((nv, ), init_noise_c)
 
-        print(init_means.shape)
         self.means = tf.Variable(init_means, dtype=tf.float32)
 
         # If we want to optimize this using tensorflow we should build it up as in
@@ -98,10 +95,11 @@ class MVNPosterior(LogBase):
         t2 = tf.expand_dims(self.noise_s, -1) * tf.expand_dims(self.noise_c, -1) * t15
         t3 = tf.einsum("ijk,ik->ij", prior.precs, prior.means)
         means_new = tf.einsum("ijk,ik->ij", covar_new, (t2 + t3))
+
         #self.sess.run(self.means.assign(self.sess.run(means_new)))
         #self.sess.run(self.precs.assign(precs_new))
         #self.sess.run(self.covar.assign(self.sess.run(tf.linalg.inv(precs_new))))
-        return means_new, tf.linalg.inv(precs_new)
+        return means_new, covar_new
 
     def update_noise(self, k, J, prior):
         """
