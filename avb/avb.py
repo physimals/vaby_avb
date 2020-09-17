@@ -27,21 +27,22 @@ class Avb(LogBase):
         LogBase.__init__(self)
         while tpts.ndim < 2:
             tpts = tpts[np.newaxis, ...]
-        self._tpts = np.array(tpts, dtype=np.float32)
-        self._data_model = data_model
-        self._data = data_model.data_flattened
-        self._nv, self._nt = tuple(self._data.shape)
+        self.tpts = np.array(tpts, dtype=np.float32)
+        self.data_model = data_model
         self.model = fwd_model
+
+        self.data = self.data_model.data_flattened
+        self.nv, self.nt = tuple(self.data.shape)
+        self.nparam = len(self.model.params)
         self._debug = kwargs.get("debug", False)
         self._maxits = kwargs.get("max_iterations", 10)
 
         model_priors = [NormalPrior(p.prior_dist.mean, p.prior_dist.var) for p in self.model.params]
         noise_prior = NoisePrior(scale=kwargs.get("noise_s0", 1e6), shape=kwargs.get("noise_c0", 1e-6))
         self.prior = Prior(model_priors, noise_prior)
-        self.post = MVNPosterior(self._data_model, self.model.params, self._tpts)
+        self.post = MVNPosterior(self.data_model, self.model.params, self.tpts)
 
         self.sess = tf.Session()
-        self.post.sess = self.sess # FIXME
         init = tf.initialize_all_variables()
         self.sess.run(init)
         
@@ -80,17 +81,14 @@ class Avb(LogBase):
 
         :return: Jacobian matrix [W, B, P]
         """
-        nt = tpts.shape[1]
-        nparams = tf.shape(params)[0]
-        nv = tf.shape(params)[1]
         J = []
-        for param_idx in range(len(self.model.params)):
+        for param_idx in range(self.nparam):
             param_value = params[param_idx]
             delta = param_value * 1e-5
             delta = tf.math.abs(delta)
             delta = tf.where(delta < 1e-5, tf.fill(tf.shape(delta), 1e-5), delta)
 
-            pick_param = tf.equal(tf.range(len(self.model.params)), param_idx)
+            pick_param = tf.equal(tf.range(self.nparam), param_idx)
             plus = tf.where(pick_param, params + delta, params)
             minus = tf.where(pick_param, params - delta, params)
 
@@ -100,23 +98,14 @@ class Avb(LogBase):
             J.append(diff / (2*delta))
         return tf.stack(J, axis=-1)
 
-    def _init_run(self):
-        self.model_means = None
-        self.model_vars = None
-        self.noise_means = None
-        self.noise_vars = None
-        self.modelfit = None
-        self.free_energy = -1e99
-        self.history = {}
-
-    def _evaluate(self, params, tpts):
-        # Make means shape [P, V, 1] to enable the parameters
+    def _evaluate(self):
+        # Make means shape [P, V] to enable the parameters
         # to be unpacked as a sequence
-        self.means_trans = tf.transpose(params, (1, 0))
+        self.means_trans = tf.transpose(self.post.means, (1, 0))
         self.model_means = self._inference_to_model(self.means_trans)
         self.model_vars = tf.stack([self.post.covar[:, v, v] for v in range(len(self.model.params))]) # fixme transform
-        modelfit = self.model.evaluate(tf.expand_dims(self.model_means, axis=-1), tpts)
-        J = self.jacobian(tf.expand_dims(self.means_trans, axis=-1), self._tpts)
+        modelfit = self.model.evaluate(tf.expand_dims(self.model_means, axis=-1), self.tpts)
+        J = self.jacobian(tf.expand_dims(self.means_trans, axis=-1), self.tpts)
         return modelfit, J
 
     def _inference_to_model(self, inference_params, idx=None):
@@ -147,29 +136,128 @@ class Avb(LogBase):
         else:
             return self.model.params[idx].post_dist.transform.int_values(model_params, ns=tf)
 
-    def run(self, history=False):
-        self._init_run()
+    def _build_graph(self):
         # Get model prediction and Jacobian from current parameters 
-        self.modelfit, self.J = self._evaluate(self.post.means, self._tpts)
+        self.modelfit, self.J = self._evaluate()        
+        self.Jt = tf.transpose(self.J, (0, 2, 1))
+        self.JtJ = tf.matmul(self.Jt, self.J)
         self.noise_means, self.noise_precs = self.noise_mean_prec(self.post)
         self.noise_vars = 1.0/self.noise_precs
-        self.k = self._data - self.modelfit
+        self.k = self.data - self.modelfit
         
         # Here we need to update spatial/ARD priors and capture
         # their contribution to the free energy
         
         # Calculate the free energy and update model parameters
         # using the AVB update equations
-        self.free_energy = self.post.free_energy(self.k, self.J, self.prior)
-        self.new_means, self.new_cov = self.post.update_model_params(self.k, self.J, self.prior)
+        self.free_energy = self._free_energy()
+        self.new_means, self.new_cov = self._update_model_params()
 
         # Follow Fabber in updating residuals after params change before updating 
         # noise. Note we don't update J and nor does Fabber (until the
         # end of the parameter updates when it re-centres the linearized model)
         self.k_new = self.k + tf.einsum("ijk,ik->ij", self.J, self.post.means - self.new_means)
-        self.noise_c_new, self.noise_s_new = self.post.update_noise(self.k_new, self.J, self.prior)
+        self.noise_c_new, self.noise_s_new = self._update_noise()
+       
+    def _update_model_params(self):
+        """
+        Update model parameters
+
+        From section 4.2 of the FMRIB Variational Bayes Tutorial I
+
+        :return Tuple of (New means, New precisions)
+        """
+        precs_new = tf.expand_dims(tf.expand_dims(self.post.noise_s, -1), -1) * tf.expand_dims(tf.expand_dims(self.post.noise_c, -1), -1) * self.JtJ + self.prior.precs
+        covar_new = tf.linalg.inv(precs_new)
+
+        t1 = tf.einsum("ijk,ik->ij", self.J, self.post.means)
+        t15 = tf.einsum("ijk,ik->ij", self.Jt, (self.k + t1))
+        t2 = tf.expand_dims(self.post.noise_s, -1) * tf.expand_dims(self.post.noise_c, -1) * t15
+        t3 = tf.einsum("ijk,ik->ij", self.prior.precs, self.prior.means)
+        means_new = tf.einsum("ijk,ik->ij", covar_new, (t2 + t3))
+
+        return means_new, covar_new
+ 
+    def _update_noise(self):
+        """
+        Update noise parameters
+
+        From section 4.2 of the FMRIB Variational Bayes Tutorial I
+
+        :return: Tuple of (New scale param, New shape param)
+        """
+        c_new = tf.fill((self.nv,), (tf.cast(self.nt, tf.float32) - 1)/2 + self.prior.noise_c)
+        t1 = 0.5 * tf.reduce_sum(tf.square(self.k), axis=-1)
+        t15 = tf.matmul(self.post.covar, self.JtJ)
+        t2 = 0.5 * tf.linalg.trace(t15)
+        t0 = 1/self.prior.noise_s
+        s_new = 1/(t0 + t1 + t2)
         
-        self._log_iter(0, history)
+        return c_new, s_new
+
+    def _free_energy(self):
+        Linv = self.post.covar
+
+        # Calculate individual parts of the free energy
+
+        # Bits arising from the factorised posterior for theta
+        expectedLogThetaDist = 0.5 * tf.linalg.slogdet(self.post.precs)[1] - 0.5 * tf.cast(self.nparam, tf.float32) * (tf.math.log(2 * math.pi) + 1)
+
+        # Bits arising fromt he factorised posterior for phi
+        expectedLogPhiDist = -tf.math.lgamma(self.post.noise_c) - self.post.noise_c * tf.math.log(self.post.noise_s) - self.post.noise_c + (self.post.noise_c - 1) * (tf.math.digamma(self.post.noise_c) + tf.math.log(self.post.noise_s))
+
+        # Bits arising from the likelihood
+        expectedLogPosteriorParts = []
+
+        # nTimes using phi_{i+1} = Qis[i].Trace()
+        expectedLogPosteriorParts.append(
+            (tf.math.digamma(self.post.noise_c) + tf.math.log(self.post.noise_s)) * (tf.cast(self.nt, tf.float32) * 0.5 + self.prior.noise_c - 1)
+        )
+
+        expectedLogPosteriorParts.append(
+            -tf.math.lgamma(self.prior.noise_c) - self.prior.noise_c * tf.math.log(self.prior.noise_s) - self.post.noise_s * self.post.noise_c / self.prior.noise_s
+        )
+
+        expectedLogPosteriorParts.append(
+            -0.5 * tf.reduce_sum(tf.square(self.k), axis=-1) - 0.5 * tf.linalg.trace(tf.matmul(self.JtJ, self.post.covar))
+        )
+
+        expectedLogPosteriorParts.append(
+            +0.5 * tf.linalg.slogdet(self.prior.precs)[1]
+            - 0.5 * tf.cast(self.nt, tf.float32) * tf.math.log(2 * math.pi) - 0.5 * tf.cast(self.nparam, tf.float32) * tf.math.log(2 * math.pi)
+        )
+
+        means = self.log_tf(self.post.means, name="means", shape=True, force=False)
+        pmeans = self.log_tf(self.prior.means, name="pmeans", shape=True, force=False)
+        pprecs = self.log_tf(self.prior.precs, name="pprecs", shape=True, force=False)
+        
+        expectedLogPosteriorParts.append(
+            -0.5 * tf.reshape(
+              tf.matmul(
+                tf.matmul(
+                    tf.reshape(means - pmeans, (self.nv, 1, self.nparam)), 
+                    pprecs
+                ),
+                tf.reshape(means - pmeans, (self.nv, self.nparam, 1))
+              ), 
+              (self.nv,)
+            )
+        )
+
+        expectedLogPosteriorParts.append(
+            -0.5 * tf.linalg.trace(self.post.covar * self.prior.precs)
+        )
+
+        # Assemble the parts into F
+        F = -expectedLogThetaDist - expectedLogPhiDist + sum(expectedLogPosteriorParts)
+
+        return F
+
+    def run(self, record_history=False):
+        self._build_graph()
+
+        self.history = {}
+        self._log_iter(0, record_history)
         self._debug_output("Start", self.J)
         # Update model and noise parameters iteratively
         for idx in range(self._maxits):
@@ -186,9 +274,9 @@ class Avb(LogBase):
 
             self.sess.run(self.update_noise)
             self._debug_output("Updated noise", self.J)
-            self._log_iter(idx+1, history)
+            self._log_iter(idx+1, record_history)
 
-        if history:
+        if record_history:
             for item, item_history in self.history.items():
                 # Reshape history items so history is in last axis not first
                 trans_axes = list(range(1, item_history[0].ndim+1)) + [0,]

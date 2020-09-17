@@ -214,7 +214,7 @@ def run(data, model_name, output, mask=None, **kwargs):
 
     history = kwargs.get("save_free_energy_history", False) or kwargs.get("save_param_history", False)
     avb = Avb(tpts, data_model, fwd_model, **kwargs)
-    runtime, _ret = _runtime(avb.run, history=history)
+    runtime, _ret = _runtime(avb.run, record_history=history)
     log.info("DONE: %.3fs", runtime)
 
     _makedirs(output, exist_ok=True)
