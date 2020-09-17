@@ -189,10 +189,14 @@ class Avb(LogBase):
             self._log_iter(idx+1, history)
 
         if history:
-            for item, history in self.history.items():
+            for item, item_history in self.history.items():
                 # Reshape history items so history is in last axis not first
-                trans_axes = list(range(1, history[0].ndim+1)) + [0,]
-                self.history[item] = self.sess.run(history).transpose(trans_axes)
+                trans_axes = list(range(1, item_history[0].ndim+1)) + [0,]
+                self.history[item] = np.array(item_history).transpose(trans_axes)
+
+        # Make final output into Numpy arrays
+        for attr in ("model_means", "model_vars", "noise_means", "noise_vars", "free_energy", "modelfit"):
+            setattr(self, attr, self.sess.run(getattr(self, attr)))
 
     def _log_iter(self, iter, history):
         fmt = {"iter" : iter}
