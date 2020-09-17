@@ -36,30 +36,30 @@ class MVNPosterior(LogBase):
 
         for idx, p in enumerate(params):
             mean, var = None, None
-            if False and p.post_init is not None: # FIXME initialization disabled
+            if p.post_init is not None:
                 mean, var = p.post_init(idx, tpts, data_model.data_flattened)
                 if mean is not None:
-                    mean = p.post_dist.transform.int_values(mean, ns=np)
+                    mean = p.post_dist.transform.int_values(mean, ns=tf)
                 if var is not None:
                     # FIXME transform
                     pass
             if mean is None:
-                mean = np.full((nv, ), p.post_dist.mean, dtype=np.float32)
+                mean = tf.fill((nv, ), p.post_dist.mean)
             if var is None:
-                var = np.full((nv, ), p.post_dist.var, dtype=np.float32)
-            init_means.append(mean)
-            init_variances.append(var)
+                var = tf.fill((nv, ), p.post_dist.var)
+            init_means.append(tf.cast(mean, tf.float32))
+            init_variances.append(tf.cast(var, tf.float32))
 
         # Make shape [W, P]
-        init_means = np.array(init_means).transpose()
-        init_variances = np.array(init_variances).transpose()
+        init_means = tf.stack(init_means, axis=-1)
+        init_variances = tf.stack(init_variances, axis=-1)
             
         init_noise_s = kwargs.get("noise_s", 1e-8)
         init_noise_c = kwargs.get("noise_c", 50.0)
         if np.array(init_noise_s).ndim == 0:
-            init_noise_s = np.full((nv, ), init_noise_s)
+            init_noise_s = tf.fill((nv, ), init_noise_s)
         if np.array(init_noise_c).ndim == 0:
-            init_noise_c = np.full((nv, ), init_noise_c)
+            init_noise_c = tf.fill((nv, ), init_noise_c)
 
         self.means = tf.Variable(init_means, dtype=tf.float32)
 
