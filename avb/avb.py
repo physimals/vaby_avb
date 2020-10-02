@@ -11,11 +11,12 @@ import math
 import numpy as np
 import scipy.special
 import tensorflow as tf
+from tensorflow.python.ops.parallel_for.gradients import jacobian
 
 from svb.utils import LogBase
 
-from .prior import Prior, NormalPrior, NoisePrior
-from .posterior import MVNPosterior
+from .prior import MVNPrior, NoisePrior, get_prior
+from .posterior import MVNPosterior, NoisePosterior
 
 class Avb(LogBase):
 
@@ -33,12 +34,10 @@ class Avb(LogBase):
 
         self.data = self.data_model.data_flattened
         self.nv, self.nt = tuple(self.data.shape)
+        self.nn = self.data_model.n_nodes
         self.nparam = len(self.model.params)
         self._debug = kwargs.get("debug", False)
         self._maxits = kwargs.get("max_iterations", 10)
-
-    def noise_mean_prec(self, dist):
-        return dist.noise_c*dist.noise_s, 1/(dist.noise_s*dist.noise_s*dist.noise_c)
 
     def _debug_output(self, text, J=None):
         if self._debug:
@@ -47,10 +46,10 @@ class Avb(LogBase):
             self.log.debug("Prior precs\n", self.prior.precs)
             self.log.debug("Post mean\n", self.post.means)
             self.log.debug("Post precs\n", self.post.precs)
-            noise_mean, noise_prec = self.noise_mean_prec(self.prior)
+            noise_mean, noise_prec = self.noise_prior.mean_prec()
             self.log.debug("Noise prior mean\n", noise_mean)
             self.log.debug("Noise prior prec\n", noise_prec)
-            noise_mean, noise_prec = self.noise_mean_prec(self.post)
+            noise_mean, noise_prec = self.noise_post.mean_prec()
             self.log.debug("Noise post mean\n", noise_mean)
             self.log.debug("Noise post prec\n", noise_prec)
             if J is not None:
@@ -87,17 +86,26 @@ class Avb(LogBase):
             minus = self._inference_to_model(minus)
             diff = self.model.evaluate(plus, tpts) - self.model.evaluate(minus, tpts)
             J.append(diff / (2*delta))
-        return tf.stack(J, axis=-1)
+        return self.log_tf(tf.stack(J, axis=-1), shape=True, force=False)
 
-    def _evaluate(self):
-        # Make means shape [P, V] to enable the parameters
-        # to be unpacked as a sequence
-        self.means_trans = tf.transpose(self.post.means, (1, 0))
-        self.model_means = self._inference_to_model(self.means_trans)
-        self.model_vars = tf.stack([self.post.covar[:, v, v] for v in range(len(self.model.params))]) # fixme transform
-        modelfit = self.model.evaluate(tf.expand_dims(self.model_means, axis=-1), self.tpts)
-        J = self.jacobian(tf.expand_dims(self.means_trans, axis=-1), self.tpts)
-        return modelfit, J
+    def jacobian2(self, modelfit, means):
+        """
+        Experimental jacobian using Tensorflow. Doesn't batch over voxels currently
+        that might need TF2
+
+        :param modelfit: [W, B]
+        :param means: [W, P]
+        """
+        #modelfit = self.log_tf(modelfit, shape=True, force=True)
+        #means = self.log_tf(means, shape=True, force=True)
+        print(modelfit[0], means[0], self.nv)
+        print(jacobian(modelfit[0], means))
+        J = tf.stack([tf.reshape(jacobian(modelfit[0], means), (self.nt, self.nparam))])
+        #J = tf.stack([
+        #    jacobian(modelfit[t], means[t])
+        #    for t in range(self.nv)
+        #])
+        return self.log_tf(J, shape=True, force=False)
 
     def _inference_to_model(self, inference_params, idx=None):
         """
@@ -127,54 +135,18 @@ class Avb(LogBase):
         else:
             return self.model.params[idx].post_dist.transform.int_values(model_params, ns=tf)
 
-    def _update_model_params(self):
-        """
-        Update model parameters
-
-        From section 4.2 of the FMRIB Variational Bayes Tutorial I
-
-        :return Tuple of (New means, New precisions)
-        """
-        precs_new = tf.expand_dims(tf.expand_dims(self.post.noise_s, -1), -1) * tf.expand_dims(tf.expand_dims(self.post.noise_c, -1), -1) * self.JtJ + self.prior.precs
-        covar_new = tf.linalg.inv(precs_new)
-
-        t1 = tf.einsum("ijk,ik->ij", self.J, self.post.means)
-        t15 = tf.einsum("ijk,ik->ij", self.Jt, (self.k + t1))
-        t2 = tf.expand_dims(self.post.noise_s, -1) * tf.expand_dims(self.post.noise_c, -1) * t15
-        t3 = tf.einsum("ijk,ik->ij", self.prior.precs, self.prior.means)
-        means_new = tf.einsum("ijk,ik->ij", covar_new, (t2 + t3))
-
-        return means_new, covar_new
- 
-    def _update_noise(self):
-        """
-        Update noise parameters
-
-        From section 4.2 of the FMRIB Variational Bayes Tutorial I
-
-        :return: Tuple of (New scale param, New shape param)
-        """
-        c_new = tf.fill((self.nv,), (tf.cast(self.nt, tf.float32) - 1)/2 + self.prior.noise_c)
-        t1 = 0.5 * tf.reduce_sum(tf.square(self.k), axis=-1)
-        t15 = tf.matmul(self.post.covar, self.JtJ)
-        t2 = 0.5 * tf.linalg.trace(t15)
-        t0 = 1/self.prior.noise_s
-        s_new = 1/(t0 + t1 + t2)
-        
-        return c_new, s_new
-
     def _free_energy(self):
         Linv = self.post.covar
 
         # Calculate individual parts of the free energy
-        # For clarify define the following:
-        c = self.post.noise_c
-        c0 = self.prior.noise_c
-        s = self.post.noise_s
-        s0 = self.prior.noise_s
+        # For clarity define the following:
+        c = self.noise_post.c
+        c0 = self.noise_prior.c
+        s = self.noise_post.s
+        s0 = self.noise_prior.s
         N = tf.cast(self.nt, tf.float32)
         NP = tf.cast(self.nparam, tf.float32)
-        P = self.post.precs
+        #P = self.post.precs
         P0 = self.prior.precs
         C = self.post.covar
         C0 = self.prior.covar
@@ -182,23 +154,31 @@ class Avb(LogBase):
         m0 = self.prior.means
         from tensorflow.math import log, digamma, lgamma
         from tensorflow.linalg import matmul, trace, slogdet
+        to_voxels = self.data_model.nodes_to_voxels
 
-        Fparts = []
+        Fparts_vox = []
+        Fparts_node = []
 
         # Expected value of the log 
+        #
+        # noise and k (residuals) are voxelwise, C and JtJ are nodewise
+        # since this is likelihood of data probably want everything voxelwise?
         #
         # -0.5sc(KtK + Tr(CJtJ))
         #
         # Fabber: 1st term in expectedLogPosteriorParts[2] but missing s*c factor
         #         2nd term in expectedLogPosteriorParts[2] missing same factor
-        Fparts.append(
-            -0.5*s*c*(tf.reduce_sum(tf.square(self.k), axis=-1) + trace(matmul(C, self.JtJ)))
+        Fparts_vox.append(
+            -0.5*s*c*(
+                tf.reduce_sum(tf.square(self.k), axis=-1) +
+                tf.squeeze(to_voxels(tf.expand_dims(trace(matmul(C, self.JtJ)), 1)), 1)
+            )
         )
 
         # Fabber: 1st & 2nd terms in expectedLogPosteriorParts[0]
         #         3nd term in expectedLogPosteriorParts[3]
-        Fparts.append(
-            0.5*N*(log(s) + digamma(c) - log(2*math.pi))
+        Fparts_vox.append(
+            0.5*N*(log(s) + digamma(c) - log(2*math.pi)) # [V]
         )
 
         # KL divergence of model posterior 
@@ -207,24 +187,24 @@ class Avb(LogBase):
         #         2nd term in expectedLogPosteriorParts[5]
         #         3rd term in expectedLogPosteriorParts[3]
         #         4th term in expectedLogThetaDist
-        Fparts.append(
-            -0.5*(slogdet(P)[1] + trace(matmul(P0, C))) + 0.5*(slogdet(P0)[1] + NP)
+        Fparts_node.append(
+            -0.5*(-slogdet(C)[1] + trace(matmul(P0, C))) + 0.5*(slogdet(P0)[1] + NP) # [W]
         )
 
         # -0.5 (m-m0)T P0 (m-m0)
         # Fabber: in expectedLogPosteriorParts[4]
-        Fparts.append(
+        Fparts_node.append(
             -0.5 * tf.reshape(
               matmul(
                 matmul(
-                    tf.reshape(m - m0, (self.nv, 1, self.nparam)), 
+                    tf.reshape(m - m0, (self.nn, 1, self.nparam)), 
                     P0
                 ),
-                tf.reshape(m - m0, (self.nv, self.nparam, 1))
+                tf.reshape(m - m0, (self.nn, self.nparam, 1))
               ), 
-              (self.nv,)
+              (self.nn,)
             )
-        )
+        ) # [W]
 
         # KL divergence of noise posterior from prior
         # Fabber: 1st term in expectedLogPhiDist
@@ -235,8 +215,8 @@ class Avb(LogBase):
         #         6th term in expectedLogPosteriorParts[9]
         #         7th term in expectedLogPosteriorParts[9]
         #         8th term in expectedLogPosteriorParts[9]
-        Fparts.append(
-            -(c-1)*(log(s) + digamma(c)) + c*log(s) + c + lgamma(c) + (c0-1)*(log(s) + digamma(c)) -lgamma(c0) - c0*log(s0) - s*c / s0
+        Fparts_vox.append(
+            -(c-1)*(log(s) + digamma(c)) + c*log(s) + c + lgamma(c) + (c0-1)*(log(s) + digamma(c)) -lgamma(c0) - c0*log(s0) - s*c / s0 # [V]
         )
 
         # Fabber: have extra factor of +0.5*Np*log 2PI in expectedLogThetaDist
@@ -244,50 +224,73 @@ class Avb(LogBase):
         # these cancel out!
 
         # Assemble the parts into F
-        self.Fparts = self.log_tf(tf.stack(Fparts, axis=-1), shape=True, force=False)
-        F = tf.reduce_sum(self.Fparts, axis=-1)
+        #
+        # FIXME we have some parts defined nodewise and some voxelwise. Need to keep them
+        # separate until we sum the contributions when optimizing the total free energy
+        Fparts_vox = self.log_tf(tf.stack(Fparts_vox, axis=-1), shape=True, force=False)
+        Fparts_node = self.log_tf(tf.stack(Fparts_node, axis=-1), shape=True, force=False)
+        F_vox = tf.reduce_sum(Fparts_vox, axis=-1)
+        F_node = tf.reduce_sum(Fparts_node, axis=-1)
+        for prior in self.param_priors:
+            F_node += prior.free_energy()
 
-        return F
+        return F_vox, F_node
 
     def _build_graph(self, use_adam, **kwargs):
         # Set up prior and posterior
-        model_priors = [NormalPrior(p.prior_dist.mean, p.prior_dist.var) for p in self.model.params]
-        noise_prior = NoisePrior(scale=kwargs.get("noise_s0", 1e6), shape=kwargs.get("noise_c0", 1e-6))
-        self.prior = Prior(model_priors, noise_prior)
+        self.noise_post = NoisePosterior(self.data_model, force_positive=use_adam)
         self.post = MVNPosterior(self.data_model, self.model.params, self.tpts, force_positive_vars=use_adam)
 
-        # Get model prediction and Jacobian from current parameters 
-        self.modelfit, self.J = self._evaluate()        
-        self.Jt = tf.transpose(self.J, (0, 2, 1))
-        self.JtJ = tf.matmul(self.Jt, self.J)
-        self.noise_means, self.noise_precs = self.noise_mean_prec(self.post)
-        self.noise_c, self.noise_s = self.post.noise_c, self.post.noise_s
-        self.noise_vars = 1.0/self.noise_precs
-        self.k = self.data - self.modelfit
-        
-        # Here we need to update spatial/ARD priors and capture
-        # their contribution to the free energy
-        
+        self.noise_prior = NoisePrior(s=kwargs.get("noise_s0", 1e6), c=kwargs.get("noise_c0", 1e-6))
+        self.param_priors = [
+            get_prior(idx, p, self.data_model, self.post, **kwargs) 
+            for idx, p in enumerate(self.model.params)
+        ]
+        self.prior = MVNPrior(self.param_priors, self.noise_prior)
+
+        # FIXME Hack for output
+        idx = 1
+        for p in self.param_priors:
+            if hasattr(p, "ak"):
+                setattr(self, "ak%i" % idx, p.ak)
+                idx += 1
+
+        # Get model prediction, Jacobian and residuals from current parameters
+        self.means_trans = tf.transpose(self.post.means, (1, 0)) # [P, W]
+        self.model_means = self._inference_to_model(self.means_trans) # [P, W]
+        self.model_vars = tf.stack([self.post.covar[:, v, v] for v in range(len(self.model.params))]) # [P, W] FIXME transform
+        self.modelfit_nodes = self.model.evaluate(tf.expand_dims(self.model_means, axis=-1), self.tpts) # [W, B]
+        self.J_nodes = self.jacobian(tf.expand_dims(self.means_trans, axis=-1), self.tpts) # [W, B, P]
+
+        # Convert model prediction and Jacobian to voxel space
+        self.modelfit = tf.squeeze(self.data_model.nodes_to_voxels_ts(tf.expand_dims(self.modelfit_nodes, 1)), 1) # [V, B]
+        self.J = self.J_nodes # FIXME? [V, B, P]
+        self.Jt = tf.transpose(self.J, (0, 2, 1)) # [W, P, B]
+        self.JtJ = tf.matmul(self.Jt, self.J) # [W, P, P]
+        self.k = self.data - self.modelfit # [V, B, P]
+
+        # Convenience for outputing noise mean, variance
+        self.noise_means, self.noise_precs = self.noise_post.mean_prec() # [V], [V]
+        self.noise_vars = 1.0/self.noise_precs # [V]
+
         # Calculate the free energy and update model parameters
         # using the AVB update equations
-        self.free_energy = self._free_energy()
-        self.new_means, self.new_cov = self._update_model_params()
+        self.free_energy_vox, self.free_energy_node = self._free_energy()
 
         # Follow Fabber in updating residuals after params change before updating 
         # noise. Note we don't update J and nor does Fabber (until the
         # end of the parameter updates when it re-centres the linearized model)
-        self.k_new = self.k + tf.einsum("ijk,ik->ij", self.J, self.post.means - self.new_means)
-        self.noise_c_new, self.noise_s_new = self._update_noise()
+        #self.k_new = self.k + tf.einsum("ijk,ik->ij", self.J, self.post.means - self.new_means)
        
         # Define adam optimizer to optimize F directly
-        self.cost = -tf.reduce_mean(self.free_energy)
-        self.optimizer = tf.train.AdamOptimizer(learning_rate=0.1)
+        self.cost = -tf.reduce_mean(self.free_energy_vox) - tf.reduce_mean(self.free_energy_node)
+        self.optimizer = tf.train.AdamOptimizer(learning_rate=0.01)
         self.optimize = self.optimizer.minimize(self.cost)
 
         self.init = tf.global_variables_initializer()
 
     def run(self, record_history=False, use_adam=False, **kwargs):
-        self._build_graph(use_adam)
+        self._build_graph(use_adam, **kwargs)
 
         self.history = {}
 
@@ -304,19 +307,28 @@ class Avb(LogBase):
         else:
             # Use analytic update equations to update model and noise parameters iteratively
             for idx in range(self._maxits):
-                self.update_theta = [
-                    self.post.means.assign(self.sess.run(self.new_means)),
-                    self.post.covar_v.assign(self.sess.run(self.new_cov))
-                ]
-                self.sess.run(self.update_theta)
-                self._debug_output("Updated theta", self.J) 
-                self.update_noise = [
-                    self.post.noise_c.assign(self.sess.run(self.noise_c_new)),
-                    self.post.noise_s.assign(self.sess.run(self.noise_s_new))
-                ]
 
-                self.sess.run(self.update_noise)
+                # Update model parameters
+                param_updates = [
+                    var.assign(self.sess.run(value)) for var, value in self.post.get_updates(self)
+                ]
+                self.sess.run(param_updates)
+                self._debug_output("Updated theta", self.J) 
+
+                # Update noise parameters
+                noise_updates = [
+                    var.assign(self.sess.run(value)) for var, value in self.noise_post.get_updates(self)
+                ]
+                self.sess.run(noise_updates)
                 self._debug_output("Updated noise", self.J)
+
+                # Update priors (e.g. spatial, ARD)
+                self.prior_updates = []
+                for prior in self.param_priors:
+                    for var, value in prior.get_updates(self.post):
+                        self.prior_updates.append(var.assign(self.sess.run(value)))
+                self.sess.run(self.prior_updates)
+
                 self._log_iter(idx+1, record_history)
 
         if record_history:
@@ -326,16 +338,29 @@ class Avb(LogBase):
                 self.history[item] = np.array(item_history).transpose(trans_axes)
 
         # Make final output into Numpy arrays
-        for attr in ("model_means", "model_vars", "noise_means", "noise_vars", "free_energy", "modelfit"):
+        for attr in ("model_means", "model_vars", "noise_means", "noise_vars", "free_energy_vox", "free_energy_node", "modelfit"):
             setattr(self, attr, self.sess.run(getattr(self, attr)))
 
     def _log_iter(self, iter, history):
-        fmt = {"iter" : iter}
-        for attr in ("model_means", "model_vars", "noise_means", "noise_vars", "free_energy"):
-            voxelwise_data = getattr(self, attr)
-            mean_data = np.mean(self.sess.run(voxelwise_data), axis=-1)
-            fmt[attr] = mean_data
+        iter_data = {"iter" : iter}
+        attrs = ["model_means", "model_vars", "noise_means", "noise_vars", "free_energy_vox", "free_energy_node"]
+        fmt = "Iteration %(iter)i: params=%(model_means)s, vars=%(model_vars)s, noise mean=%(noise_means)e, var=%(noise_vars)e, F=%(free_energy_vox)e, %(free_energy_node)e"
+
+        # Pick up any spatial smoothing params to output
+        # FIXME ugly and hacky
+        idx = 1
+        while hasattr(self, "ak%i" % idx):
+            attrs.append("ak%i" % idx)
+            fmt += ", ak%i=%%(ak%i)e" % (idx, idx)
+            idx += 1
+
+        for attr in attrs:
+            data = self.sess.run(getattr(self, attr))
+            if data.size > 1:
+                # voxelwise data
+                data = np.mean(data, axis=-1)
+            iter_data[attr] = data
             if history:
                 if attr not in self.history: self.history[attr] = []
                 self.history[attr].append(voxelwise_data)
-        self.log.info("Iteration %(iter)i: params=%(model_means)s, vars=%(model_vars)s, noise mean=%(noise_means)e, var=%(noise_vars)e, F=%(free_energy)e" % fmt)
+        self.log.info(fmt % iter_data)
