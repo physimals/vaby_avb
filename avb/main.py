@@ -18,7 +18,8 @@ import numpy as np
 
 from . import __version__, Avb
 from svb.utils import ValueList
-from svb import DataModel, get_model_class
+from svb import get_model_class
+from svb.data import VolumetricModel, SurfaceModel
 
 USAGE = "avb <options>"
 
@@ -180,7 +181,7 @@ def main():
         import traceback
         traceback.print_exc()
 
-def run(data, model_name, output, mask=None, **kwargs):
+def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
     """
     Run model fitting on a data set
 
@@ -201,7 +202,10 @@ def run(data, model_name, output, mask=None, **kwargs):
 
     # Initialize the data model which contains data dimensions, number of time
     # points, list of unmasked voxels, etc
-    data_model = DataModel(data, mask, **kwargs)
+    if surfaces is None: 
+        data_model = VolumetricModel(data, mask, **kwargs)
+    else:
+        data_model = SurfaceModel(data, surfaces, mask, **kwargs)
     
     # Create the generative model
     fwd_model = get_model_class(model_name)(data_model, **kwargs)
@@ -241,9 +245,9 @@ def run(data, model_name, output, mask=None, **kwargs):
 
     # Write out voxelwise free energy (and history if required)
     if kwargs.get("save_free_energy", False):
-        data_model.nifti_image(avb.free_energy).to_filename(os.path.join(output, "free_energy.nii.gz"))
+        data_model.nifti_image(avb.free_energy_vox).to_filename(os.path.join(output, "free_energy.nii.gz"))
     if kwargs.get("save_free_energy_history", False):
-        data_model.nifti_image(avb.history["free_energy"]).to_filename(os.path.join(output, "free_energy_history.nii.gz"))
+        data_model.nifti_image(avb.history["free_energy_vox"]).to_filename(os.path.join(output, "free_energy_history.nii.gz"))
 
     # Write out voxelwise parameter history
     if kwargs.get("save_param_history", False):
