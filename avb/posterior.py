@@ -45,7 +45,7 @@ class NoisePosterior(LogBase):
         # FIXME need k (residuals) in voxel-space
         t1 = 0.5 * tf.reduce_sum(tf.square(avb.k), axis=-1) # [V]
         # FIXME need CJtJ in voxel-space?
-        t15 = tf.matmul(avb.post.covar, avb.JtJ) # [V, P, P]
+        t15 = tf.matmul(avb.post.cov, avb.JtJ) # [V, P, P]
         t2 = 0.5 * tf.linalg.trace(t15) # [V]
         t0 = 1/avb.noise_prior.s # [V]
         s_new = 1/(t0 + t1 + t2)
@@ -59,9 +59,9 @@ class MVNPosterior(LogBase):
     """
     MVN Posterior distribution for model parameters
 
-    :attr means: Parameter prior means [W, P]
-    :attr covar: Parameter covariance matrix [W, P, P]
-    :attr precs: Parameter precision matrix [W, P, P]
+    :attr mean: mean [W, P]
+    :attr cov: covariance matrix [W, P, P]
+    :attr prec: precision matrix [W, P, P]
     """
 
     def __init__(self, data_model, params, tpts, **kwargs):
@@ -70,8 +70,8 @@ class MVNPosterior(LogBase):
         LogBase.__init__(self)
         nn = data_model.n_nodes
 
-        init_means = []
-        init_variances = []
+        init_mean = []
+        init_var = []
 
         for idx, p in enumerate(params):
             mean, var = None, None
@@ -88,36 +88,36 @@ class MVNPosterior(LogBase):
             if var is None:
                 var = tf.fill((nn, ), p.post_dist.var)
 
-            init_means.append(tf.cast(mean, tf.float32))
-            init_variances.append(tf.cast(var, tf.float32))
+            init_mean.append(tf.cast(mean, tf.float32))
+            init_var.append(tf.cast(var, tf.float32))
 
         # Make shape [W, P]
-        init_means = tf.stack(init_means, axis=-1)
-        init_variances = tf.stack(init_variances, axis=-1)
+        init_mean = tf.stack(init_mean, axis=-1)
+        init_var = tf.stack(init_var, axis=-1)
 
-        self.means = tf.Variable(init_means, dtype=tf.float32)
+        self.mean = tf.Variable(init_mean, dtype=tf.float32)
 
         # If we want to optimize this using tensorflow we should build it up as in
         # SVB to ensure it is always positive definite. The analytic approach
         # guarantees this automatically (I think!)
-        if kwargs.get("force_positive_vars", False):
-            self.log_var = tf.Variable(tf.math.log(init_variances))
+        if kwargs.get("force_positive_var", False):
+            self.log_var = tf.Variable(tf.math.log(init_var))
             self.var = tf.math.exp(self.log_var)
             self.std = tf.math.sqrt(self.var)
             self.std_diag = tf.matrix_diag(self.std)
-            covar_init = tf.zeros([nn, len(params), len(params)], dtype=tf.float32)
+            cov_init = tf.zeros([nn, len(params), len(params)], dtype=tf.float32)
 
-            self.off_diag_vars = tf.Variable(covar_init)
+            self.off_diag_vars = tf.Variable(cov_init)
             self.off_diag_cov_chol = tf.matrix_set_diag(tf.matrix_band_part(self.off_diag_vars, -1, 0),
                                                         tf.zeros([nn, len(params)]))
             self.off_diag_cov_chol = self.log_tf(self.off_diag_cov_chol, shape=True, force=False, name="offdiag")
-            self.covar_chol = tf.add(self.std_diag, self.off_diag_cov_chol)
-            self.covar = tf.matmul(tf.transpose(self.covar_chol, perm=(0, 2, 1)), self.covar_chol)
-            self.covar = self.log_tf(self.covar, shape=True, force=False, name="covar")
+            self.cov_chol = tf.add(self.std_diag, self.off_diag_cov_chol)
+            self.cov = tf.matmul(tf.transpose(self.cov_chol, perm=(0, 2, 1)), self.cov_chol)
+            self.cov = self.log_tf(self.cov, shape=True, force=False, name="cov")
         else:
-            self.covar = tf.Variable(tf.linalg.diag(init_variances), dtype=tf.float32)
+            self.cov = tf.Variable(tf.linalg.diag(init_var), dtype=tf.float32)
 
-        self.precs = tf.linalg.inv(self.covar)
+        self.prec = tf.linalg.inv(self.cov)
 
     def get_updates(self, avb):
         """
@@ -127,16 +127,16 @@ class MVNPosterior(LogBase):
 
         :return: Sequence of tuples: (variable, new value)
         """
-        precs_new = tf.expand_dims(tf.expand_dims(avb.noise_post.s, -1), -1) * tf.expand_dims(tf.expand_dims(avb.noise_post.c, -1), -1) * avb.JtJ + avb.prior.precs
-        covar_new = tf.linalg.inv(precs_new)
+        prec_new = tf.expand_dims(tf.expand_dims(avb.noise_post.s, -1), -1) * tf.expand_dims(tf.expand_dims(avb.noise_post.c, -1), -1) * avb.JtJ + avb.prior.prec
+        cov_new = tf.linalg.inv(prec_new)
 
-        t1 = tf.einsum("ijk,ik->ij", avb.J, avb.post.means)
+        t1 = tf.einsum("ijk,ik->ij", avb.J, self.mean)
         t15 = tf.einsum("ijk,ik->ij", avb.Jt, (avb.k + t1))
         t2 = tf.expand_dims(avb.noise_post.s, -1) * tf.expand_dims(avb.noise_post.c, -1) * t15
-        t3 = tf.einsum("ijk,ik->ij", avb.prior.precs, avb.prior.means)
-        means_new = tf.einsum("ijk,ik->ij", covar_new, (t2 + t3))
+        t3 = tf.einsum("ijk,ik->ij", avb.prior.prec, avb.prior.mean)
+        mean_new = tf.einsum("ijk,ik->ij", cov_new, (t2 + t3))
 
         return [
-            (self.means, means_new),
-            (self.covar, covar_new),
+            (self.mean, mean_new),
+            (self.cov, cov_new),
         ]

@@ -112,9 +112,9 @@ class MRFSpatialPrior(ParameterPrior):
         # nearest neighbour mean values. This does not involve the current posterior
         # mean at the voxel itself!
         # This is the equivalent of ApplyToMVN in Fabber
-        node_means = self.log_tf(tf.expand_dims(post.means[:, idx], 1), name="node_means", force=False, shape=True) # [W]
+        node_mean = self.log_tf(tf.expand_dims(post.mean[:, idx], 1), name="node_mean", force=False, shape=True) # [W]
         node_nn_total_weight = self.log_tf(tf.sparse_reduce_sum(laplacian_nodiag, axis=1), name="node_weight", force=False, shape=True) # [W]
-        spatial_mean = self.log_tf(tf.sparse_tensor_dense_matmul(laplacian_nodiag, node_means), name="matmul", force=False, shape=True)
+        spatial_mean = self.log_tf(tf.sparse_tensor_dense_matmul(laplacian_nodiag, node_mean), name="matmul", force=False, shape=True)
         spatial_mean = self.log_tf(tf.squeeze(spatial_mean, 1), name="matmul2", force=False, shape=True)
         spatial_mean = self.log_tf(spatial_mean / node_nn_total_weight, name="spmean", force=False, shape=True)
         spatial_prec = node_nn_total_weight * self.ak
@@ -163,7 +163,7 @@ class ARDPrior(ParameterPrior):
         :param post: Current posterior
         :return: Sequence of tuples: (variable to update, tensor to update from)
         """
-        new_var = tf.square(post.means[:, self.idx]) + post.covar[:, self.idx, self.idx]
+        new_var = tf.square(post.mean[:, self.idx]) + post.cov[:, self.idx, self.idx]
         return [(self.log_phi, tf.log(1/new_var),)]
 
     def free_energy(self):
@@ -202,12 +202,10 @@ class MVNPrior(LogBase):
     is in terms of normal ranges for individual parameters rather than 
     relationships between them.
 
-    :attr means: Parameter prior means [W, P] or [1, P]
-    :attr variances: Parameter prior variances [W, P] or [1, P]
-    :attr covar: Prior covariance matrix (diagonal) [W, P, P] or [1, P, P]
-    :attr precs: Prior precision matrix (diagonal) [W, P, P] or [1, P, P]
-    :attr noise_s: Noise gamma distribution prior scale parameter [W] or scalar
-    :attr noise_c: Noise gamma distribution prior shape parameter [W] or scalar
+    :attr mean: Prior mean [W, P] or [1, P]
+    :attr var: Prior variances [W, P] or [1, P]
+    :attr cov: Prior covariance matrix (always diagonal) [W, P, P] or [1, P, P]
+    :attr prec: Prior precision matrix (always diagonal) [W, P, P] or [1, P, P]
     """
     def __init__(self, param_priors, noise_prior):
         """
@@ -216,7 +214,7 @@ class MVNPrior(LogBase):
         """
         LogBase.__init__(self)
 
-        self.means = tf.stack([p.mean for p in param_priors], axis=1)
-        self.variances = tf.stack([p.variance for p in param_priors], axis=1)
-        self.covar = tf.linalg.diag(self.variances)
-        self.precs = tf.linalg.inv(self.covar)
+        self.mean = tf.stack([p.mean for p in param_priors], axis=1)
+        self.var = tf.stack([p.variance for p in param_priors], axis=1)
+        self.cov = tf.linalg.diag(self.var)
+        self.prec = tf.linalg.inv(self.cov)

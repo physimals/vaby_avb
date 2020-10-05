@@ -225,11 +225,11 @@ def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
     params = [p.name for p in fwd_model.params]
     
     # Write out parameter mean and variance images
-    means = avb.model_means
-    variances = avb.model_vars
+    mean = avb.model_mean
+    variances = avb.model_var
     for idx, param in enumerate(params):
         if kwargs.get("save_mean", False):
-            data_model.nifti_image(means[idx]).to_filename(os.path.join(output, "mean_%s.nii.gz" % param))
+            data_model.nifti_image(mean[idx]).to_filename(os.path.join(output, "mean_%s.nii.gz" % param))
         if kwargs.get("save_var", False):
             data_model.nifti_image(variances[idx]).to_filename(os.path.join(output, "var_%s.nii.gz" % param))
         if kwargs.get("save_std", False):
@@ -237,11 +237,11 @@ def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
 
     if kwargs.get("save_noise", False):
         if kwargs.get("save_mean", False):
-            data_model.nifti_image(avb.noise_means).to_filename(os.path.join(output, "mean_noise.nii.gz"))
+            data_model.nifti_image(avb.noise_mean).to_filename(os.path.join(output, "mean_noise.nii.gz"))
         if kwargs.get("save_var", False):
-            data_model.nifti_image(avb.noise_vars).to_filename(os.path.join(output, "var_noise.nii.gz"))
+            data_model.nifti_image(avb.noise_var).to_filename(os.path.join(output, "var_noise.nii.gz"))
         if kwargs.get("save_std", False):
-            data_model.nifti_image(np.sqrt(avb.noise_vars)).to_filename(os.path.join(output, "std_noise.nii.gz"))
+            data_model.nifti_image(np.sqrt(avb.noise_var)).to_filename(os.path.join(output, "std_noise.nii.gz"))
 
     # Write out voxelwise free energy (and history if required)
     if kwargs.get("save_free_energy", False):
@@ -252,7 +252,7 @@ def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
     # Write out voxelwise parameter history
     if kwargs.get("save_param_history", False):
         for idx, param in enumerate(params):
-            data_model.nifti_image(avb.history["model_means"][idx]).to_filename(os.path.join(output, "mean_%s_history.nii.gz" % param))
+            data_model.nifti_image(avb.history["model_mean"][idx]).to_filename(os.path.join(output, "mean_%s_history.nii.gz" % param))
 
     # Write out modelfit
     if kwargs.get("save_model_fit", False):
@@ -260,7 +260,7 @@ def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
 
     # Write out posterior
     #if kwargs.get("save_post", False):
-    #    post_data = data_model.posterior_data(avb.post.all_means, avb.post.all_cov)
+    #    post_data = data_model.posterior_data(avb.post.all_mean, avb.post.all_cov)
     #    log.info("Posterior data shape: %s", post_data.shape)
     #    data_model.nifti_image(post_data).to_filename(os.path.join(output, "posterior.nii.gz"))
 
