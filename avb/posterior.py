@@ -51,8 +51,8 @@ class NoisePosterior(LogBase):
         s_new = 1/(t0 + t1 + t2)
 
         return [
-            (self.log_s, tf.log(s_new)),
-            (self.log_c, tf.log(c_new))
+            (self.log_s, tf.math.log(s_new)),
+            (self.log_c, tf.math.log(c_new))
         ]
 
 class MVNPosterior(LogBase):
@@ -75,7 +75,7 @@ class MVNPosterior(LogBase):
 
         for idx, p in enumerate(params):
             mean, var = None, None
-            if False and p.post_init is not None:
+            if p.post_init is not None: # FIXME won't work if nodes != voxels
                 mean, var = p.post_init(idx, tpts, data_model.data_flattened)
                 if mean is not None:
                     mean = p.post_dist.transform.int_values(mean, ns=tf)
