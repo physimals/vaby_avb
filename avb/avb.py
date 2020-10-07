@@ -10,7 +10,7 @@ import math
 
 import numpy as np
 import scipy.special
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 from tensorflow.python.ops.parallel_for.gradients import jacobian
 
 from svb.utils import LogBase
@@ -247,6 +247,12 @@ class Avb(LogBase):
             for idx, p in enumerate(self.model.params)
         ]
         self.prior = MVNPrior(self.param_priors, self.noise_prior)
+
+        # Report summary of parameters
+        for idx, param in enumerate(self.model.params):
+            self.log.info(" - %s", param)
+            self.log.info("   - Prior: %s %s", param.prior_dist, self.param_priors[idx])
+            self.log.info("   - Posterior: %s", param.post_dist)
 
         # FIXME Hack for output
         idx = 1
