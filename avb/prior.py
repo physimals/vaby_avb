@@ -87,6 +87,19 @@ class MRFSpatialPrior(ParameterPrior):
         """
         """
         LogBase.__init__(self)
+        self.idx = idx
+        self.n_nodes = data_model.n_nodes
+
+        # Laplacian matrix with diagonal zeroed
+        indices=np.array([
+                data_model.laplacian.row, 
+                data_model.laplacian.col
+        ]).T
+        self.laplacian = tf.SparseTensor(
+            indices=indices,
+            values=data_model.laplacian.data, 
+            dense_shape=[data_model.n_nodes, data_model.n_nodes]
+        ) # [W, W] sparse
 
         # Laplacian matrix with diagonal zeroed
         offdiag_mask = data_model.laplacian.row != data_model.laplacian.col
@@ -94,11 +107,14 @@ class MRFSpatialPrior(ParameterPrior):
                 data_model.laplacian.row[offdiag_mask], 
                 data_model.laplacian.col[offdiag_mask]
         ]).T
-        laplacian_nodiag = tf.SparseTensor(
+        self.laplacian_nodiag = tf.SparseTensor(
             indices=indices,
             values=data_model.laplacian.data[offdiag_mask], 
             dense_shape=[data_model.n_nodes, data_model.n_nodes]
         ) # [W, W] sparse
+
+        # Diagonal of Laplacian matrix [W]
+        self.laplacian_diagonal = self.log_tf(tf.constant(-data_model.laplacian.diagonal(), dtype=tf.float32), name="selfweight", force=False, shape=True)
 
         # Set up spatial smoothing parameter - infer the log so always positive
         ak_init = kwargs.get("ak", 1e-5)
@@ -113,8 +129,8 @@ class MRFSpatialPrior(ParameterPrior):
         # mean at the voxel itself!
         # This is the equivalent of ApplyToMVN in Fabber
         node_mean = self.log_tf(tf.expand_dims(post.mean[:, idx], 1), name="node_mean", force=False, shape=True) # [W]
-        node_nn_total_weight = self.log_tf(tf.sparse_reduce_sum(laplacian_nodiag, axis=1), name="node_weight", force=False, shape=True) # [W]
-        spatial_mean = self.log_tf(tf.sparse_tensor_dense_matmul(laplacian_nodiag, node_mean), name="matmul", force=False, shape=True)
+        node_nn_total_weight = self.log_tf(tf.sparse_reduce_sum(self.laplacian_nodiag, axis=1), name="node_weight", force=False, shape=True) # [W]
+        spatial_mean = self.log_tf(tf.sparse_tensor_dense_matmul(self.laplacian_nodiag, node_mean), name="matmul", force=False, shape=True)
         spatial_mean = self.log_tf(tf.squeeze(spatial_mean, 1), name="matmul2", force=False, shape=True)
         spatial_mean = self.log_tf(spatial_mean / node_nn_total_weight, name="spmean", force=False, shape=True)
         spatial_prec = node_nn_total_weight * self.ak
@@ -122,12 +138,70 @@ class MRFSpatialPrior(ParameterPrior):
         self.variance = self.log_tf(1 / (1/init_variance + spatial_prec), name="spvar", force=False, shape=True)
         self.mean = self.log_tf(self.variance * spatial_prec * spatial_mean, name="spmean2", force=False, shape=True)
 
-    def free_energy(self):
-        # Gamma prior if we care
-        q1, q2 = 1, 100
-        F = ((q1-1) * self.log_ak - self.ak / q2)
-        print("F=", F)
-        return F
+    def get_updates(self, post):
+        """
+        Update the global spatial precision when using analytic update mode
+
+        Penny et al 2005 Fig 4 (Spatial Precisions)
+
+        This is the equivalent of Fabber's CalculateAk
+
+        :param post: Current posterior
+        :return: Sequence of tuples: (variable to update, tensor to update from)
+        """
+        # Posterior variance for parameter [W]
+        sigmaK = post.cov[:, self.idx, self.idx]
+
+        # Posterior mean for parameter [W]
+        wK = self.log_tf(tf.expand_dims(post.mean[:, self.idx], 1), name="wK", force=False, shape=True)
+
+        # First term for gk:   Tr(sigmaK*S'*S) (note our Laplacian is S'*S directly)
+        trace_term = self.log_tf(tf.reduce_sum(sigmaK * self.laplacian_diagonal), name="trace", force=False, shape=True)
+
+        # Contribution from nearest neighbours - sum of differences
+        # between voxel mean and neighbour mean multipled by the
+        # neighbour weighting [W]
+        SwK = -tf.sparse_tensor_dense_matmul(self.laplacian, wK)
+
+        # For MRF spatial prior the spatial precision matrix S'S is handled
+        # directly so we are effectively calculating wK * D * wK where
+        # D is the spatial matrix.
+        # This is second term for gk:  wK'S'SwK using elementwise multiplication
+        term2 = self.log_tf(tf.reduce_sum(SwK * wK), name="term2", force=False, shape=True)
+
+        #self.log.warn("MRFSpatialPrior::Calculate aK %i: trace_term=%e, term2=%e", self.idx, trace_term, term2)
+
+        # Fig 4 in Penny (2005) update equations for gK, hK and aK
+        # Following Penny, prior on aK is a relatively uninformative gamma distribution with 
+        # q1 = 10 (1/q1 = 0.1) and q2 = 1.0
+        gk = 1 / (0.5 * trace_term + 0.5 * term2 + 0.1); 
+        hK = self.n_nodes * 0.5 + 1.0
+        aK = gk * hK
+
+        # Checks below are from Fabber - unsure if required
+        #
+        #if aK < 1e-50:
+        #    // Don't let aK get too small
+        #    LOG << "SpatialPrior::Calculate aK " << m_idx << ": was " << aK << endl;
+        #    WARN_ONCE("SpatialPrior::Calculate aK - value was tiny - fixing to 1e-50");
+        #    aK = 1e-50;
+
+        # Controls the speed of changes to aK - unsure whether this is useful or not but
+        # it is only used if m_spatial_speed is given as an option
+
+        # FIXME default for m_spatial_speed is -1 so code below will always be executed - 
+        # harmless but potentially confusing
+        #aKMax = aK * m_spatial_speed;
+        #if aKMax < 0.5:
+        #    # totally the wrong scaling.. oh well
+        #    aKMax = 0.5
+
+        #if m_spatial_speed > 0 and aK > aKMax:
+        #    self.log.warn("MRFSpatialPrior::Calculate aK %i: Rate-limiting the increase on aK: was %e, now %e", self.idx, ak, akMax)
+        #    aK = aKMax
+
+        #self.log.info("MRFSpatialPrior::Calculate aK %i: New aK: %e", self.idx, ak)
+        return [(self.log_ak, tf.log(aK),)]
 
 class ARDPrior(ParameterPrior):
     """
@@ -145,13 +219,13 @@ class ARDPrior(ParameterPrior):
 
         # Set up inferred precision parameter phi - infer the log so always positive
         self.log_phi = tf.Variable(default, name="log_phi", dtype=tf.float32)
-        self.phi = self.log_tf(tf.exp(self.log_phi, name="phi"))
+        self.phi = self.log_tf(tf.clip_by_value(tf.exp(self.log_phi), 0, 1e6), name="phi")
 
         # FIXME hack to make phi get printed after each iteration using code written for
         # the MRF spatial prior
         self.ak = tf.reduce_mean(self.phi)
 
-        self.variance = 1/self.phi
+        self.variance = self.log_tf(1/self.phi, force=False, shape=True, name="priorvar")
         self.mean = tf.fill((nn,), tf.constant(0.0, dtype=tf.float32))
 
     def get_updates(self, post):
@@ -163,15 +237,19 @@ class ARDPrior(ParameterPrior):
         :param post: Current posterior
         :return: Sequence of tuples: (variable to update, tensor to update from)
         """
-        new_var = tf.square(post.mean[:, self.idx]) + post.cov[:, self.idx, self.idx]
+        mean = self.log_tf(post.mean[:, self.idx], force=False, shape=True, name="postmean")
+        var = self.log_tf(post.cov[:, self.idx, self.idx], force=False, shape=True, name="postcov")
+        new_var = tf.square(mean) + var
+        new_var = self.log_tf(new_var, force=False, shape=True, name="new_var")
         return [(self.log_phi, tf.log(1/new_var),)]
 
     def free_energy(self):
         # See appendix D of Fabber paper
         # Tends to force phi -> 0 - but this means high prior variance which has cost?
         b = 2 * self.phi
-        F = -1.5 * (tf.math.log(b) + tf.math.digamma(0.5)) - 0.5*(1 + tf.math.log(b)) - tf.math.lgamma(0.5)
-        return F
+        t1 = self.log_tf(-1.5 * (tf.math.log(b) + tf.math.digamma(0.5)) + 0.5*(1 + tf.math.log(b)), name="t1", force=False)
+        t2 = self.log_tf(-tf.math.lgamma(0.5), name="t2", force=False)
+        return - (t1 + t2)
 
 class NoisePrior(LogBase):
     """
