@@ -96,10 +96,6 @@ class Avb(LogBase):
         :param modelfit: [W, B]
         :param mean: [W, P]
         """
-        #modelfit = self.log_tf(modelfit, shape=True, force=True)
-        #mean = self.log_tf(mean, shape=True, force=True)
-        print(modelfit[0], mean[0], self.nv)
-        print(jacobian(modelfit[0], mean))
         J = tf.stack([tf.reshape(jacobian(modelfit[0], mean), (self.nt, self.nparam))])
         #J = tf.stack([
         #    jacobian(modelfit[t], mean[t])
@@ -159,7 +155,7 @@ class Avb(LogBase):
         Fparts_vox = []
         Fparts_node = []
 
-        # Expected value of the log 
+        # Expected value of the log likelihood
         #
         # noise and k (residuals) are voxelwise, C and JtJ are nodewise
         # since this is likelihood of data probably want everything voxelwise?
@@ -227,10 +223,10 @@ class Avb(LogBase):
         #
         # FIXME we have some parts defined nodewise and some voxelwise. Need to keep them
         # separate until we sum the contributions when optimizing the total free energy
-        Fparts_vox = self.log_tf(tf.stack(Fparts_vox, axis=-1), shape=True, force=False)
-        Fparts_node = self.log_tf(tf.stack(Fparts_node, axis=-1), shape=True, force=False)
-        F_vox = tf.reduce_sum(Fparts_vox, axis=-1)
-        F_node = tf.reduce_sum(Fparts_node, axis=-1)
+        self.Fparts_vox = self.log_tf(tf.stack(Fparts_vox, axis=-1), shape=True, force=False)
+        self.Fparts_node = self.log_tf(tf.stack(Fparts_node, axis=-1), shape=True, force=False)
+        F_vox = tf.reduce_sum(self.Fparts_vox, axis=-1)
+        F_node = tf.reduce_sum(self.Fparts_node, axis=-1)
         for prior in self.param_priors:
             F_node += prior.free_energy()
 
@@ -238,6 +234,7 @@ class Avb(LogBase):
 
     def _build_graph(self, use_adam, **kwargs):
         # Set up prior and posterior
+        self.tpts = tf.constant(self.tpts, dtype=tf.float32) # FIXME
         self.noise_post = NoisePosterior(self.data_model, force_positive=use_adam)
         self.post = MVNPosterior(self.data_model, self.model.params, self.tpts, force_positive_var=use_adam)
 
@@ -266,11 +263,12 @@ class Avb(LogBase):
         self.model_mean = self._inference_to_model(self.mean_trans) # [P, W]
         self.model_var = tf.stack([self.post.cov[:, v, v] for v in range(len(self.model.params))]) # [P, W] FIXME transform
         self.modelfit_nodes = self.model.evaluate(tf.expand_dims(self.model_mean, axis=-1), self.tpts) # [W, B]
+        self.modelfit_nodes = self.log_tf(self.modelfit_nodes, force=False, shape=True, name="modelfit") 
         self.J_nodes = self.jacobian(tf.expand_dims(self.mean_trans, axis=-1), self.tpts) # [W, B, P]
 
         # Convert model prediction and Jacobian to voxel space
         self.modelfit = tf.squeeze(self.data_model.nodes_to_voxels_ts(tf.expand_dims(self.modelfit_nodes, 1)), 1) # [V, B]
-        self.J = self.J_nodes # FIXME? [V, B, P]
+        self.J = self.log_tf(self.J_nodes, force=False, shape=True, name="J", summarize=1000) # FIXME? [V, B, P]
         self.Jt = tf.transpose(self.J, (0, 2, 1)) # [W, P, B]
         self.JtJ = tf.matmul(self.Jt, self.J) # [W, P, P]
         self.k = self.data - self.modelfit # [V, B, P]
@@ -289,8 +287,8 @@ class Avb(LogBase):
         #self.k_new = self.k + tf.einsum("ijk,ik->ij", self.J, self.post.mean - self.new_mean)
        
         # Define adam optimizer to optimize F directly
-        self.cost = -tf.reduce_mean(self.free_energy_vox) - tf.reduce_mean(self.free_energy_node)
-        self.optimizer = tf.train.AdamOptimizer(learning_rate=0.01)
+        self.cost = -tf.reduce_mean(self.free_energy_vox) - tf.reduce_mean(self.free_energy_vox)
+        self.optimizer = tf.train.AdamOptimizer(learning_rate=0.5)
         self.optimize = self.optimizer.minimize(self.cost)
 
         self.init = tf.global_variables_initializer()
