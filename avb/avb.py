@@ -76,15 +76,15 @@ class Avb(LogBase):
             param_value = params[param_idx]
             delta = param_value * 1e-5
             delta = tf.math.abs(delta)
-            delta = tf.where(delta < 1e-5, tf.fill(tf.shape(delta), 1e-5), delta)
+            delta = tf.where(delta < 1e-10, tf.fill(tf.shape(delta), 1e-10), delta)
 
             pick_param = tf.equal(tf.range(self.nparam), param_idx)
             plus = tf.where(pick_param, params + delta, params)
             minus = tf.where(pick_param, params - delta, params)
 
-            plus = self._inference_to_model(plus)
-            minus = self._inference_to_model(minus)
-            diff = self.model.evaluate(plus, tpts) - self.model.evaluate(minus, tpts)
+            plus = self.log_tf(self._inference_to_model(plus), force=False, shape=True, name="plus")
+            minus = self.log_tf(self._inference_to_model(minus), force=False, shape=True, name="minus")
+            diff = self.log_tf(self.model.evaluate(plus, tpts), force=False, shape=True, name="plus") - self.log_tf(self.model.evaluate(minus, tpts), force=False, shape=True, name="minus")
             J.append(diff / (2*delta))
         return self.log_tf(tf.stack(J, axis=-1), shape=True, force=False)
 
@@ -131,6 +131,10 @@ class Avb(LogBase):
         else:
             return self.model.params[idx].post_dist.transform.int_values(model_params, ns=tf)
 
+    def _sum_sq_resid(self):
+        cost = tf.reduce_sum(tf.square(self.k), axis=-1)
+        return cost
+
     def _free_energy(self):
         Linv = self.post.cov
 
@@ -166,7 +170,12 @@ class Avb(LogBase):
         #         2nd term in expectedLogPosteriorParts[2] missing same factor
         Fparts_vox.append(
             -0.5*s*c*(
-                tf.reduce_sum(tf.square(self.k), axis=-1) +
+                tf.reduce_sum(tf.square(self.k), axis=-1)
+            )
+        )
+
+        Fparts_vox.append(
+            -0.5*s*c*(
                 tf.squeeze(to_voxels(tf.expand_dims(trace(matmul(C, self.JtJ)), 1)), 1)
             )
         )
@@ -223,7 +232,7 @@ class Avb(LogBase):
         #
         # FIXME we have some parts defined nodewise and some voxelwise. Need to keep them
         # separate until we sum the contributions when optimizing the total free energy
-        self.Fparts_vox = self.log_tf(tf.stack(Fparts_vox, axis=-1), shape=True, force=False)
+        self.Fparts_vox = self.log_tf(tf.stack(Fparts_vox, axis=-1), shape=True, force=False, name="F_vox")
         self.Fparts_node = self.log_tf(tf.stack(Fparts_node, axis=-1), shape=True, force=False)
         F_vox = tf.reduce_sum(self.Fparts_vox, axis=-1)
         F_node = tf.reduce_sum(self.Fparts_node, axis=-1)
@@ -232,11 +241,11 @@ class Avb(LogBase):
 
         return F_vox, F_node
 
-    def _build_graph(self, use_adam, **kwargs):
+    def _build_graph(self, **kwargs):
         # Set up prior and posterior
         self.tpts = tf.constant(self.tpts, dtype=tf.float32) # FIXME
-        self.noise_post = NoisePosterior(self.data_model, force_positive=use_adam)
-        self.post = MVNPosterior(self.data_model, self.model.params, self.tpts, force_positive_var=use_adam)
+        self.noise_post = NoisePosterior(self.data_model, force_positive=kwargs.get("use_adam", False))
+        self.post = MVNPosterior(self.data_model, self.model.params, self.tpts, force_positive_var=kwargs.get("use_adam", False))
 
         self.noise_prior = NoisePrior(s=kwargs.get("noise_s0", 1e6), c=kwargs.get("noise_c0", 1e-6))
         self.param_priors = [
@@ -260,7 +269,7 @@ class Avb(LogBase):
 
         # Get model prediction, Jacobian and residuals from current parameters
         self.mean_trans = tf.transpose(self.post.mean, (1, 0)) # [P, W]
-        self.model_mean = self._inference_to_model(self.mean_trans) # [P, W]
+        self.model_mean = self.log_tf(self._inference_to_model(self.mean_trans), force=False, shape=True, name="mean") # [P, W]
         self.model_var = tf.stack([self.post.cov[:, v, v] for v in range(len(self.model.params))]) # [P, W] FIXME transform
         self.modelfit_nodes = self.model.evaluate(tf.expand_dims(self.model_mean, axis=-1), self.tpts) # [W, B]
         self.modelfit_nodes = self.log_tf(self.modelfit_nodes, force=False, shape=True, name="modelfit") 
@@ -270,8 +279,9 @@ class Avb(LogBase):
         self.modelfit = tf.squeeze(self.data_model.nodes_to_voxels_ts(tf.expand_dims(self.modelfit_nodes, 1)), 1) # [V, B]
         self.J = self.log_tf(self.J_nodes, force=False, shape=True, name="J", summarize=1000) # FIXME? [V, B, P]
         self.Jt = tf.transpose(self.J, (0, 2, 1)) # [W, P, B]
-        self.JtJ = tf.matmul(self.Jt, self.J) # [W, P, P]
-        self.k = self.data - self.modelfit # [V, B, P]
+        self.JtJ = self.log_tf(tf.matmul(self.Jt, self.J), shape=True, force=False, name="jtj") # [W, P, P]
+        data = self.log_tf(tf.constant(self.data, dtype=tf.float32), name="data", force=False, shape=True)
+        self.k = self.log_tf(data - self.modelfit, name="k", force=False, shape=True) # [V, B, P]
 
         # Convenience for outputing noise mean, variance
         self.noise_mean, self.noise_prec = self.noise_post.mean_prec() # [V], [V]
@@ -280,6 +290,7 @@ class Avb(LogBase):
         # Calculate the free energy and update model parameters
         # using the AVB update equations
         self.free_energy_vox, self.free_energy_node = self._free_energy()
+        self.sum_sq_resid = self._sum_sq_resid()
 
         # Follow Fabber in updating residuals after params change before updating 
         # noise. Note we don't update J and nor does Fabber (until the
@@ -287,54 +298,66 @@ class Avb(LogBase):
         #self.k_new = self.k + tf.einsum("ijk,ik->ij", self.J, self.post.mean - self.new_mean)
        
         # Define adam optimizer to optimize F directly
-        self.cost = -tf.reduce_mean(self.free_energy_vox) - tf.reduce_mean(self.free_energy_vox)
-        self.optimizer = tf.train.AdamOptimizer(learning_rate=0.5)
-        self.optimize = self.optimizer.minimize(self.cost)
-
+        self.cost = -tf.reduce_mean(self.free_energy_vox) - tf.reduce_mean(self.free_energy_node)
+        self.optimizer = tf.train.AdamOptimizer(learning_rate=kwargs.get("learning_rate", 0.5))
+        self.optimize_leastsq = self.optimizer.minimize(self.sum_sq_resid)
+        self.optimize_f = self.optimizer.minimize(self.cost)
         self.init = tf.global_variables_initializer()
 
-    def run(self, record_history=False, use_adam=False, **kwargs):
-        self._build_graph(use_adam, **kwargs)
+    def run_leastsq(self, record_history, **kwargs):
+        for idx in range(self._maxits):
+            self.sess.run(self.optimize_leastsq)
+            self._log_iter(idx+1, record_history)
 
+    def run_maxf(self, record_history, **kwargs):
+        for idx in range(self._maxits):
+            self.sess.run(self.optimize_f)
+            self._log_iter(idx+1, record_history)
+
+    def run_analytic(self, record_history, **kwargs):
+        # Use analytic update equations to update model and noise parameters iteratively
+        for idx in range(self._maxits):
+
+            # Update model parameters
+            param_updates = [
+                var.assign(self.sess.run(value)) for var, value in self.post.get_updates(self)
+            ]
+            self.sess.run(param_updates)
+            self._debug_output("Updated theta", self.J) 
+
+            # Update noise parameters
+            noise_updates = [
+                var.assign(self.sess.run(value)) for var, value in self.noise_post.get_updates(self)
+            ]
+            self.sess.run(noise_updates)
+            self._debug_output("Updated noise", self.J)
+
+            # Update priors (e.g. spatial, ARD)
+            self.prior_updates = []
+            for prior in self.param_priors:
+                for var, value in prior.get_updates(self.post):
+                    self.prior_updates.append(var.assign(self.sess.run(value)))
+            self.sess.run(self.prior_updates)
+
+            self._log_iter(idx+1, record_history)
+
+    def run(self, record_history=False, **kwargs):
         self.history = {}
-
+        
+        self._build_graph(**kwargs)
         self.sess = tf.Session()
         self.sess.run(self.init)
-        
+
         self._log_iter(0, record_history)
         self._debug_output("Start", self.J)
 
-        if use_adam:
-            for idx in range(self._maxits):
-                self.sess.run(self.optimize)
-                self._log_iter(idx+1, record_history)
+        if kwargs.get("use_adam", False):
+            if kwargs.get("init_leastsq", False):
+                self.run_leastsq(record_history)
+            self.run_maxf(record_history)
         else:
-            # Use analytic update equations to update model and noise parameters iteratively
-            for idx in range(self._maxits):
-
-                # Update model parameters
-                param_updates = [
-                    var.assign(self.sess.run(value)) for var, value in self.post.get_updates(self)
-                ]
-                self.sess.run(param_updates)
-                self._debug_output("Updated theta", self.J) 
-
-                # Update noise parameters
-                noise_updates = [
-                    var.assign(self.sess.run(value)) for var, value in self.noise_post.get_updates(self)
-                ]
-                self.sess.run(noise_updates)
-                self._debug_output("Updated noise", self.J)
-
-                # Update priors (e.g. spatial, ARD)
-                self.prior_updates = []
-                for prior in self.param_priors:
-                    for var, value in prior.get_updates(self.post):
-                        self.prior_updates.append(var.assign(self.sess.run(value)))
-                self.sess.run(self.prior_updates)
-
-                self._log_iter(idx+1, record_history)
-
+            self.run_analytic(record_history)
+            
         if record_history:
             for item, item_history in self.history.items():
                 # Reshape history items so history is in last axis not first
@@ -347,8 +370,8 @@ class Avb(LogBase):
 
     def _log_iter(self, iter, history):
         iter_data = {"iter" : iter}
-        attrs = ["model_mean", "model_var", "noise_mean", "noise_var", "free_energy_vox", "free_energy_node"]
-        fmt = "Iteration %(iter)i: params=%(model_mean)s, var=%(model_var)s, noise mean=%(noise_mean)e, var=%(noise_var)e, F=%(free_energy_vox)e, %(free_energy_node)e"
+        attrs = ["model_mean", "model_var", "noise_mean", "noise_var", "free_energy_vox", "free_energy_node", "cost"]
+        fmt = "Iteration %(iter)i: params=%(model_mean)s, var=%(model_var)s, noise mean=%(noise_mean)e, var=%(noise_var)e, F=%(free_energy_vox)e, %(free_energy_node)e, %(cost)e"
 
         # Pick up any spatial smoothing params to output
         # FIXME ugly and hacky

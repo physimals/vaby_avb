@@ -60,6 +60,17 @@ class AvbArgumentParser(argparse.ArgumentParser):
                          help="Display help")
         
         group = self.add_argument_group("Inference options")
+        group.add_argument("--max-iterations",
+                         help="Max number of iterations",
+                         type=int, default=20)
+        group.add_argument("--use-adam", action="store_true", default=False,
+                         help="Directly maximise free energy using Adam optimizer")
+        group.add_argument("--learning-rate",
+                         help="Learning rate for Adam optimizer",
+                         type=float, default=0.5)
+        group.add_argument("--init-leastsq",
+                         help="Do an initial least-squares fit before optimizing full free energy cost",
+                         action="store_true", default=False)
 
         group = self.add_argument_group("Output options")
         group.add_argument("--save-var",
@@ -174,7 +185,7 @@ def main():
         welcome = "Welcome to AVB %s" % __version__
         print(welcome)
         print("=" * len(welcome))
-        runtime, _, _ = run(log_stream=sys.stdout, **vars(options))
+        runtime, _ = run(log_stream=sys.stdout, **vars(options))
         print("FINISHED - runtime %.3fs" % runtime)
     except (RuntimeError, ValueError) as exc:
         sys.stderr.write("ERROR: %s\n" % str(exc))
