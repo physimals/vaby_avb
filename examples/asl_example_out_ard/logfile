@@ -1,0 +1,88 @@
+INFO:avb.main:AVB 0.0.1.post31
+INFO:VolumetricModel:Loaded data from asldata_diff.nii.gz
+INFO:VolumetricModel:Loaded data from asldata_mask.nii.gz
+INFO:AslRestModel:Model: ASL resting state model: 0.0.1.post10
+INFO:AslRestModel: - Bolus duration: 1.8
+INFO:AslRestModel: - Data is CASL/pCASL: True
+INFO:AslRestModel: - Bolus arrival time: 1.3
+INFO:AslRestModel: - Bolus arrival time prior std.dev.: 1.0
+INFO:AslRestModel: - Tissue T1 value: 1.3
+INFO:AslRestModel: - Blood T1 value: 1.65
+INFO:AslRestModel: - Inversion times: [2.05, 2.3, 2.55, 2.8, 3.05, 3.3]
+INFO:AslRestModel: - Post-labelling delays (for CASL instead of TIs): [0.25, 0.5, 0.75, 1.0, 1.25, 1.5]
+INFO:AslRestModel: - Number of repeats - single value or one per TI/PLD: 8
+INFO:AslRestModel: - Increase in TI/PLD per slice: 0.0452
+INFO:AslRestModel: - Infer arterial component: True
+INFO:AslRestModel: - Infer T1 value: None
+INFO:AslRestModel: - Blood/tissue partition coefficient: 0.9
+INFO:AslRestModel: - Perfusion value to use in estimation of effective T1: 0.01
+INFO:Avb: - Parameter: ftiss
+INFO:Avb:   - Prior: Gaussian (1.500000, 1000000.000000) <avb.prior.NormalPrior object at 0x7f9919590e80>
+INFO:Avb:   - Posterior: Gaussian (1.500000, 1.500000)
+INFO:Avb: - Parameter: delttiss
+INFO:Avb:   - Prior: Folded Normal (1.300000, 1.000000) <avb.prior.NormalPrior object at 0x7f9919590f60>
+INFO:Avb:   - Posterior: Folded Normal (1.300000, 1.000000)
+INFO:Avb: - Parameter: fblood
+INFO:Avb:   - Prior: Folded Normal (0.000000, 1000000.000000) <avb.prior.ARDPrior object at 0x7f9919595278>
+INFO:Avb:   - Posterior: Folded Normal (0.000000, 1.500000)
+INFO:Avb: - Parameter: deltblood
+INFO:Avb:   - Prior: Folded Normal (1.000000, 1.000000) <avb.prior.NormalPrior object at 0x7f9919595710>
+INFO:Avb:   - Posterior: Folded Normal (1.000000, 1.000000)
+WARNING:tensorflow:From /home/ibmeuser/.local/lib/python3.7/site-packages/svb_models_asl/aslrest.py:159: where (from tensorflow.python.ops.array_ops) is deprecated and will be removed in a future version.
+Instructions for updating:
+Use tf.where in 2.0, which has the same broadcast rule as np.where
+INFO:Avb:Iteration 0: params=[11.077629  1.3      11.077629  1.      ], var=[1.5 1.  1.5 1. ], noise mean=4.999998e-07, var=4.999997e-15, F=-4.071056e+02, -7.506657e+01, ak1=1.000001e-12
+INFO:Avb:Iteration 1: params=[4.044737  1.2999474 7.808248  1.0000211], var=[1.0457591e+05 9.9941611e-01 1.4845767e+11 9.6330148e-01], noise mean=1.682521e-05, var=1.310352e-11, F=-3.470450e+02, -6.260502e+01, ak1=1.000001e-12
+WARNING:tensorflow:From /home/ibmeuser/.local/lib/python3.7/site-packages/avb/prior.py:244: The name tf.log is deprecated. Please use tf.math.log instead.
+
+INFO:Avb:Iteration 2: params=[4.0347576  1.3001317  2.368454   0.99996674], var=[3.4809631e+03 9.9752903e-01 1.4838279e+11 9.7475111e-01], noise mean=3.378385e-04, var=1.136719e-08, F=-2.889395e+02, -3.298484e+01, ak1=5.085806e-06
+INFO:Avb:Iteration 3: params=[4.338066  1.2953165 4.0285697 0.9985012], var=[6.0890027e+02 9.5773506e-01 1.4826530e+11 9.6086538e-01], noise mean=9.436701e-03, var=1.169865e-05, F=-2.128116e+02, -3.222873e+01, ak1=6.174087e-05
+INFO:Avb:Iteration 4: params=[4.148103   1.318155   1.6109195  0.99068624], var=[1.0432177e+02 6.9687968e-01 1.4826216e+11 9.4136727e-01], noise mean=5.669449e-02, var=4.623901e-04, F=-1.880273e+02, -2.832830e+01, ak1=1.228124e-03
+INFO:Avb:Iteration 5: params=[4.623792  1.3131496 2.2358358 0.9782899], var=[6.3148064e+01 6.2471759e-01 1.4823496e+11 9.2600310e-01], noise mean=1.086594e-01, var=1.189181e-03, F=-1.518733e+02, -2.760879e+01, ak1=1.656569e-02
+INFO:Avb:Iteration 6: params=[4.6909704  1.4194158  0.99952877 0.9723888 ], var=[4.9397282e+01 3.7134370e-01 1.4822130e+11 9.0680784e-01], noise mean=1.184841e-01, var=1.396614e-03, F=-1.489842e+02, -2.419186e+01, ak1=1.064775e-01
+INFO:Avb:Iteration 7: params=[4.9600863 1.3583754 1.3154647 0.9744984], var=[4.6825443e+01 4.5227969e-01 1.4821440e+11 9.1860795e-01], noise mean=1.787848e-01, var=2.247188e-03, F=-1.353789e+02, -2.395436e+01, ak1=2.458816e-01
+INFO:Avb:Iteration 8: params=[5.086456   1.4856316  0.82795733 0.9736893 ], var=[1.9141603e+01 2.7473897e-01 1.4821294e+11 9.2472076e-01], noise mean=1.901436e-01, var=2.466123e-03, F=-1.336405e+02, -2.157811e+01, ak1=4.249156e-01
+INFO:Avb:Iteration 9: params=[5.2019963 1.4193348 0.9160051 0.9739563], var=[1.2120066e+02 3.5440210e-01 1.4821266e+11 9.3623376e-01], noise mean=2.047032e-01, var=2.941612e-03, F=-1.322452e+02, -2.128994e+01, ak1=5.804833e-01
+INFO:Avb:Iteration 10: params=[5.435452  1.5107498 0.7378199 0.9755246], var=[2.6290636e+01 2.6394150e-01 1.4821237e+11 9.3389916e-01], noise mean=2.108131e-01, var=3.093686e-03, F=-1.315609e+02, -2.019890e+01, ak1=8.331950e-01
+INFO:Avb:Iteration 11: params=[5.1351147  1.4436169  0.80754745 0.9753889 ], var=[1.6427441e+03 3.1558558e-01 1.4821225e+11 9.4147664e-01], noise mean=2.139162e-01, var=3.228927e-03, F=-1.316717e+02, -1.995171e+01, ak1=1.029338e+00
+INFO:Avb:Iteration 12: params=[5.537114   1.5064557  0.6820736  0.97564346], var=[8.6502434e+01 2.6164213e-01 1.4821215e+11 9.4022322e-01], noise mean=2.163216e-01, var=3.284859e-03, F=-1.310575e+02, -1.942332e+01, ak1=1.313084e+00
+INFO:Avb:Iteration 13: params=[5.247292   1.452186   0.70453846 0.9771213 ], var=[6.4170972e+02 3.0146638e-01 1.4821211e+11 9.4545847e-01], noise mean=2.165649e-01, var=3.321530e-03, F=-1.309995e+02, -1.925874e+01, ak1=1.532997e+00
+INFO:Avb:Iteration 14: params=[5.520224   1.5023781  0.6491205  0.97741395], var=[3.5179340e+01 2.5683594e-01 1.4821209e+11 9.4236815e-01], noise mean=2.190268e-01, var=3.362206e-03, F=-1.303179e+02, -1.893714e+01, ak1=1.830671e+00
+INFO:Avb:Iteration 15: params=[5.3841558  1.4569097  0.64448947 0.9763397 ], var=[5.1017706e+02 2.9607677e-01 1.4821209e+11 9.4826353e-01], noise mean=2.189099e-01, var=3.381625e-03, F=-1.303612e+02, -1.883696e+01, ak1=2.049237e+00
+INFO:Avb:Iteration 16: params=[5.5685596  1.5068767  0.61130244 0.9789148 ], var=[9.1425468e+01 2.5379419e-01 1.4821207e+11 9.4678473e-01], noise mean=2.210091e-01, var=3.411121e-03, F=-1.296199e+02, -1.861350e+01, ak1=2.347973e+00
+INFO:Avb:Iteration 17: params=[5.416387  1.4604533 0.637273  0.9770936], var=[4.3227917e+02 2.9084137e-01 1.4821207e+11 9.5182538e-01], noise mean=2.203100e-01, var=3.417369e-03, F=-1.298228e+02, -1.854396e+01, ak1=2.567624e+00
+INFO:Avb:Iteration 18: params=[5.6057763  1.5064021  0.5928595  0.97772616], var=[5.9879581e+01 2.4895039e-01 1.4821207e+11 9.4987452e-01], noise mean=2.218026e-01, var=3.432665e-03, F=-1.293025e+02, -1.837582e+01, ak1=2.860023e+00
+INFO:Avb:Iteration 19: params=[5.4109173  1.4626207  0.6260134  0.97844124], var=[5.1502356e+02 2.8846234e-01 1.4821207e+11 9.5283437e-01], noise mean=2.209233e-01, var=3.428786e-03, F=-1.297445e+02, -1.830411e+01, ak1=3.084978e+00
+INFO:Avb:Iteration 20: params=[5.613986   1.5068376  0.59577495 0.9784618 ], var=[6.4373573e+01 2.4800695e-01 1.4821207e+11 9.5203245e-01], noise mean=2.225193e-01, var=3.452958e-03, F=-1.291477e+02, -1.817311e+01, ak1=3.375359e+00
+INFO:Avb:Iteration 21: params=[5.4113235 1.4632349 0.5850835 0.9769306], var=[1.3961163e+03 2.8564528e-01 1.4821207e+11 9.5486808e-01], noise mean=2.215308e-01, var=3.445777e-03, F=-1.297396e+02, -1.810963e+01, ak1=3.593676e+00
+INFO:Avb:Iteration 22: params=[5.603804   1.5065682  0.58081234 0.97984177], var=[1.4231516e+02 2.4746841e-01 1.4821207e+11 9.5358706e-01], noise mean=2.228529e-01, var=3.459512e-03, F=-1.291257e+02, -1.799120e+01, ak1=3.885158e+00
+INFO:Avb:Iteration 23: params=[5.4437428 1.4644012 0.5827603 0.977954 ], var=[7.3084894e+02 2.8417546e-01 1.4821207e+11 9.5541197e-01], noise mean=2.220651e-01, var=3.455262e-03, F=-1.294814e+02, -1.794246e+01, ak1=4.106367e+00
+INFO:Avb:Iteration 24: params=[5.633505  1.5054342 0.5727058 0.9790183], var=[3.7638592e+01 2.4626477e-01 1.4821207e+11 9.5575023e-01], noise mean=2.236871e-01, var=3.478476e-03, F=-1.287730e+02, -1.784625e+01, ak1=4.391455e+00
+INFO:Avb:Iteration 25: params=[5.425747  1.4628657 0.588224  0.9797294], var=[5.5219171e+02 2.8140157e-01 1.4821207e+11 9.5724225e-01], noise mean=2.226816e-01, var=3.466433e-03, F=-1.291161e+02, -1.780298e+01, ak1=4.612520e+00
+INFO:Avb:Iteration 26: params=[5.6166825  1.508575   0.56897503 0.9791371 ], var=[5.8977886e+01 2.4541603e-01 1.4821207e+11 9.5638037e-01], noise mean=2.243243e-01, var=3.489339e-03, F=-1.285603e+02, -1.772930e+01, ak1=4.896938e+00
+INFO:Avb:Iteration 27: params=[5.488638   1.4645534  0.57736504 0.97824043], var=[5.6572070e+02 2.7934462e-01 1.4821207e+11 9.5844400e-01], noise mean=2.232136e-01, var=3.475479e-03, F=-1.289882e+02, -1.768192e+01, ak1=5.114525e+00
+INFO:Avb:Iteration 28: params=[5.61306   1.5048215 0.588351  0.9805628], var=[8.5579445e+01 2.4396914e-01 1.4821207e+11 9.5887840e-01], noise mean=2.249345e-01, var=3.501911e-03, F=-1.284075e+02, -1.760569e+01, ak1=5.401553e+00
+INFO:Avb:Iteration 29: params=[5.456856  1.4672904 0.5830008 0.9785307], var=[7.1911578e+02 2.8016269e-01 1.4821207e+11 9.5959413e-01], noise mean=2.237218e-01, var=3.491567e-03, F=-1.289412e+02, -1.757272e+01, ak1=5.620606e+00
+INFO:Avb:Iteration 30: params=[5.6418195  1.5069325  0.54830945 0.97877747], var=[4.2998535e+01 2.4061395e-01 1.4821207e+11 9.5917940e-01], noise mean=2.253913e-01, var=3.510867e-03, F=-1.282667e+02, -1.750966e+01, ak1=5.901679e+00
+INFO:Avb:Iteration 31: params=[5.483226   1.4642767  0.58926296 0.98100907], var=[1.5658112e+03 2.7929530e-01 1.4821207e+11 9.6141315e-01], noise mean=2.242458e-01, var=3.494576e-03, F=-1.288848e+02, -1.746605e+01, ak1=6.122550e+00
+INFO:Avb:Iteration 32: params=[5.632509  1.5071262 0.5851712 0.9800807], var=[7.3909416e+01 2.4374923e-01 1.4821207e+11 9.6017516e-01], noise mean=2.255195e-01, var=3.519994e-03, F=-1.283901e+02, -1.741825e+01, ak1=6.406300e+00
+INFO:Avb:Iteration 33: params=[5.461415  1.4656575 0.5821059 0.9786794], var=[9.4415869e+02 2.7654248e-01 1.4821207e+11 9.6070737e-01], noise mean=2.243503e-01, var=3.507011e-03, F=-1.289409e+02, -1.738507e+01, ak1=6.623546e+00
+INFO:Avb:Iteration 34: params=[5.6436934  1.5056858  0.57370365 0.9804664 ], var=[1.2643200e+02 2.4331802e-01 1.4821207e+11 9.6008331e-01], noise mean=2.257212e-01, var=3.520136e-03, F=-1.283041e+02, -1.732858e+01, ak1=6.906406e+00
+INFO:Avb:Iteration 35: params=[5.5015063  1.4659084  0.57205266 0.97834384], var=[5.0107043e+02 2.7626088e-01 1.4821207e+11 9.6210003e-01], noise mean=2.246199e-01, var=3.509430e-03, F=-1.286667e+02, -1.731074e+01, ak1=7.124797e+00
+INFO:Avb:Iteration 36: params=[5.6319346  1.5063554  0.5508195  0.97949016], var=[5.4408852e+01 2.4091180e-01 1.4821207e+11 9.6156973e-01], noise mean=2.259179e-01, var=3.525731e-03, F=-1.281126e+02, -1.726728e+01, ak1=7.404376e+00
+INFO:Avb:Iteration 37: params=[5.4549003  1.4659288  0.5803407  0.98101753], var=[6.6524237e+02 2.7661741e-01 1.4821207e+11 9.6219385e-01], noise mean=2.245285e-01, var=3.505153e-03, F=-1.287287e+02, -1.723538e+01, ak1=7.623816e+00
+INFO:Avb:Iteration 38: params=[5.62439   1.5055152 0.5749658 0.9792181], var=[4.3212593e+01 2.4097672e-01 1.4821207e+11 9.6217161e-01], noise mean=2.259367e-01, var=3.525019e-03, F=-1.282164e+02, -1.719809e+01, ak1=7.905828e+00
+INFO:Avb:Iteration 39: params=[5.4982266  1.4671394  0.5711554  0.97948474], var=[6.6906018e+02 2.7590704e-01 1.4821207e+11 9.6219784e-01], noise mean=2.248644e-01, var=3.513295e-03, F=-1.286658e+02, -1.717366e+01, ak1=8.122882e+00
+INFO:Avb:Iteration 40: params=[5.6402826  1.5075336  0.57341355 0.9812035 ], var=[9.9683014e+01 2.4087043e-01 1.4821207e+11 9.6241611e-01], noise mean=2.261984e-01, var=3.533700e-03, F=-1.282233e+02, -1.713728e+01, ak1=8.407435e+00
+INFO:Avb:Iteration 41: params=[5.463237  1.4673146 0.5780967 0.9787449], var=[1.5570038e+03 2.7630833e-01 1.4821207e+11 9.6233028e-01], noise mean=2.248933e-01, var=3.519959e-03, F=-1.289050e+02, -1.711436e+01, ak1=8.624574e+00
+INFO:Avb:Iteration 42: params=[5.6369658  1.5058503  0.55655235 0.97947276], var=[4.4585014e+01 2.4068826e-01 1.4821207e+11 9.6237385e-01], noise mean=2.261739e-01, var=3.532629e-03, F=-1.282114e+02, -1.707900e+01, ak1=8.900019e+00
+INFO:Avb:Iteration 43: params=[5.5112853 1.4658012 0.5773583 0.9807912], var=[9.6027747e+02 2.7635998e-01 1.4821207e+11 9.6344995e-01], noise mean=2.249003e-01, var=3.513902e-03, F=-1.286690e+02, -1.705528e+01, ak1=9.119523e+00
+INFO:Avb:Iteration 44: params=[5.6260457  1.5050275  0.5825969  0.97995853], var=[3.2836174e+01 2.4158840e-01 1.4821207e+11 9.6322381e-01], noise mean=2.263680e-01, var=3.540270e-03, F=-1.281974e+02, -1.703099e+01, ak1=9.398343e+00
+INFO:Avb:Iteration 45: params=[5.496704   1.4670025  0.57048124 0.97845805], var=[6.2794043e+02 2.7476481e-01 1.4821207e+11 9.6306854e-01], noise mean=2.251226e-01, var=3.522195e-03, F=-1.285666e+02, -1.701553e+01, ak1=9.614544e+00
+INFO:Avb:Iteration 46: params=[5.6352177  1.5062404  0.55876285 0.9809048 ], var=[1.1810420e+02 2.4001475e-01 1.4821207e+11 9.6341461e-01], noise mean=2.263513e-01, var=3.532826e-03, F=-1.280652e+02, -1.698348e+01, ak1=9.896067e+00
+INFO:Avb:Iteration 47: params=[5.528894   1.4679458  0.58348304 0.9798753 ], var=[4.7193567e+02 2.7580258e-01 1.4821207e+11 9.6342009e-01], noise mean=2.251445e-01, var=3.522747e-03, F=-1.286380e+02, -1.696720e+01, ak1=1.011407e+01
+INFO:Avb:Iteration 48: params=[5.6428466  1.5063632  0.5617095  0.97929895], var=[3.4424461e+01 2.3942231e-01 1.4821207e+11 9.6245074e-01], noise mean=2.264535e-01, var=3.538793e-03, F=-1.280770e+02, -1.693896e+01, ak1=1.039255e+01
+INFO:Avb:Iteration 49: params=[5.4699903  1.4675758  0.58310866 0.9807422 ], var=[7.5833069e+02 2.7453721e-01 1.4821207e+11 9.6420228e-01], noise mean=2.250924e-01, var=3.520242e-03, F=-1.286990e+02, -1.691569e+01, ak1=1.060995e+01
+INFO:Avb:Iteration 50: params=[5.6590037  1.5081805  0.5701038  0.97913617], var=[3.1461346e+01 2.4055058e-01 1.4821207e+11 9.6230257e-01], noise mean=2.264371e-01, var=3.538874e-03, F=-1.281268e+02, -1.689606e+01, ak1=1.088753e+01
+INFO:avb.main:DONE: 296.635s
+INFO:avb.main:Output written to: asl_example_out_ard

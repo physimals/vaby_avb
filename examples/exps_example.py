@@ -17,7 +17,7 @@ import svb
 # each time, so the results are repeatable. However it is worth changing
 # the seed (or simply removing this line) to see how different data samples
 # affect the results
-#np.random.seed(0)
+np.random.seed(0)
 
 # Ground truth parameters
 PARAMS_TRUTH = [42, 0.5]
@@ -52,7 +52,15 @@ options = {
     "save_model_fit" : True,
     "save_log" : True,
     "log_stream" : sys.stdout,
-    "max_iterations" : 20,
+    "max_iterations" : 40,
+#    "use_adam" : False,
+    "max_iterations" : 15000,
+    "use_adam" : True,
+    "param_overrides" : {
+        "amp1" : {
+            "prior_type" : "M"
+        },
+    },
 }
 
 runtime, avb = run("data_exp_noisy.nii.gz", "exp", "exps_example_out", **options)

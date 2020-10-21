@@ -1,0 +1,3 @@
+INFO:avb.main:AVB 0.0.1.post34
+INFO:VolumetricModel:Loaded data from asldata_diff.nii.gz
+INFO:VolumetricModel:Loaded data from asldata_mask.nii.gz
