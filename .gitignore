@@ -7,3 +7,5 @@ dist
 doc/html
 .vscode
 doc/doctrees
+.DS_Store
+examples/*_out
