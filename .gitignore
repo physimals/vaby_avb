@@ -8,5 +8,6 @@ doc/html
 .vscode
 doc/doctrees
 *.nii.gz
+*.nii
 examples/*_out
 .DS_Store
