@@ -12,11 +12,12 @@ import numpy as np
 import scipy.special
 import tensorflow.compat.v1 as tf
 from tensorflow.python.ops.parallel_for.gradients import jacobian
+tf.disable_v2_behavior()
 
 from svb.utils import LogBase
 
 from .prior import MVNPrior, NoisePrior, get_prior
-from .posterior import MVNPosterior, NoisePosterior
+from .posterior import MVNPosterior, NoisePosterior, CombinedPosterior
 
 class Avb(LogBase):
 
@@ -254,6 +255,9 @@ class Avb(LogBase):
         ]
         self.prior = MVNPrior(self.param_priors, self.noise_prior)
 
+        # Combined parameter/noise posterior for output only
+        self.all_post = CombinedPosterior(self.post, self.noise_post)
+
         # Report summary of parameters
         for idx, param in enumerate(self.model.params):
             self.log.info(" - %s", param)
@@ -287,6 +291,10 @@ class Avb(LogBase):
         self.noise_mean, self.noise_prec = self.noise_post.mean_prec() # [V], [V]
         self.noise_var = 1.0/self.noise_prec # [V]
 
+        # Convenience for outputing combined posterior
+        self.all_mean = self.all_post.mean
+        self.all_cov = self.all_post.cov
+
         # Calculate the free energy and update model parameters
         # using the AVB update equations
         self.free_energy_vox, self.free_energy_node = self._free_energy()
@@ -317,7 +325,6 @@ class Avb(LogBase):
     def run_analytic(self, record_history, **kwargs):
         # Use analytic update equations to update model and noise parameters iteratively
         for idx in range(self._maxits):
-
             # Update model parameters
             param_updates = [
                 var.assign(self.sess.run(value)) for var, value in self.post.get_updates(self)
@@ -365,7 +372,8 @@ class Avb(LogBase):
                 self.history[item] = np.array(item_history).transpose(trans_axes)
 
         # Make final output into Numpy arrays
-        for attr in ("model_mean", "model_var", "noise_mean", "noise_var", "free_energy_vox", "free_energy_node", "modelfit"):
+        for attr in ("model_mean", "model_var", "noise_mean", "noise_var", "free_energy_vox", "free_energy_node",
+                     "modelfit", "all_mean", "all_cov"):
             setattr(self, attr, self.sess.run(getattr(self, attr)))
 
     def _log_iter(self, iter, history):

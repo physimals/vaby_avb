@@ -222,10 +222,8 @@ def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
     fwd_model = get_model_class(model_name)(data_model, **kwargs)
     fwd_model.log_config()
 
-    # Get the time points from the model
+    # Get the time points from the model in node space
     tpts = fwd_model.tpts()
-    if tpts.ndim > 1 and tpts.shape[0] > 1:
-        tpts = tpts[data_model.mask_flattened > 0]
 
     history = kwargs.get("save_free_energy_history", False) or kwargs.get("save_param_history", False)
     avb = Avb(tpts, data_model, fwd_model, **kwargs)
@@ -270,10 +268,10 @@ def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
         data_model.nifti_image(avb.modelfit).to_filename(os.path.join(output, "modelfit.nii.gz"))
 
     # Write out posterior
-    #if kwargs.get("save_post", False):
-    #    post_data = data_model.posterior_data(avb.post.all_mean, avb.post.all_cov)
-    #    log.info("Posterior data shape: %s", post_data.shape)
-    #    data_model.nifti_image(post_data).to_filename(os.path.join(output, "posterior.nii.gz"))
+    if kwargs.get("save_post", False):
+        post_data = data_model.posterior_data(avb.all_mean, avb.all_cov)
+        log.info("Posterior data shape: %s", post_data.shape)
+        data_model.nifti_image(post_data).to_filename(os.path.join(output, "posterior.nii.gz"))
 
     # Write out runtime
     if kwargs.get("save_runtime", False):
