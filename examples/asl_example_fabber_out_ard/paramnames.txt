@@ -1,4 +1,0 @@
-ftiss
-fblood
-delttiss
-deltblood
