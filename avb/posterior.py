@@ -17,13 +17,26 @@ class NoisePosterior(LogBase):
     """
 
     def __init__(self, data_model, **kwargs):
+        LogBase.__init__(self)
         nv = data_model.n_unmasked_voxels
-        init_s = kwargs.get("s", 1e-8)
-        init_c = kwargs.get("c", 50.0)
-        if np.array(init_s).ndim == 0:
-            init_s = tf.fill((nv, ), init_s)
-        if np.array(init_c).ndim == 0:
-            init_c = tf.fill((nv, ), init_c)
+
+        if kwargs.get("init", None) is not None:
+            # Initial posterior provided
+            # This will be a full set of means and covariances
+            # and will include the noise component
+            self.log.info("Initializing noise from previous run")
+            init_mean, init_cov = kwargs["init"]
+            init_mean = init_mean[:, -1]
+            init_var = init_cov[:, -1, -1]
+            init_s = init_var / init_mean
+            init_c = init_mean / init_s
+        else:
+            init_s = kwargs.get("s", 1e-8)
+            init_c = kwargs.get("c", 50.0)
+            if np.array(init_s).ndim == 0:
+                init_s = tf.fill((nv, ), init_s)
+            if np.array(init_c).ndim == 0:
+                init_c = tf.fill((nv, ), init_c)
 
         self.log_s = tf.Variable(tf.math.log(init_s), dtype=tf.float32, name="noise_s")
         self.log_c = tf.Variable(tf.math.log(init_c), dtype=tf.float32, name="noise_c")
@@ -74,44 +87,57 @@ class MVNPosterior(LogBase):
         self.num_nodes = data_model.n_nodes
         self.num_params = len(params)
 
-        init_mean = []
-        init_var = []
+        if kwargs.get("init", None) is not None:
+            # Initial posterior provided
+            # This will be a full set of means and covariances
+            # and will include the noise component
+            self.log.info("Initializing posterior from previous run")
+            init_mean, init_cov = kwargs["init"]
+            init_mean = init_mean[:, :-1]
+            init_cov = init_cov[:, :-1, :-1]
+            init_var = tf.linalg.diag_part(init_cov)
+        else:
+            # Parameters provide initial mean and variance
+            init_mean = []
+            init_var = []
 
-        for idx, p in enumerate(params):
-            mean, var = None, None
-            if p.post_init is not None: # FIXME won't work if nodes != voxels
-                mean, var = p.post_init(idx, tpts, data_model.data_flattened)
-                if mean is not None:
-                    mean = p.post_dist.transform.int_values(mean, ns=tf)
-                if var is not None:
-                    # FIXME transform
-                    pass
+            for idx, p in enumerate(params):
+                mean, var = None, None
+                if p.post_init is not None: # FIXME won't work if nodes != voxels
+                    mean, var = p.post_init(idx, tpts, data_model.data_flattened)
+                    if mean is not None:
+                        mean = p.post_dist.transform.int_values(mean, ns=tf)
+                    if var is not None:
+                        # FIXME transform
+                        pass
 
-            if mean is None:
-                mean = tf.fill((self.num_nodes, ), p.post_dist.mean)
-            if var is None:
-                var = tf.fill((self.num_nodes, ), p.post_dist.var)
+                if mean is None:
+                    mean = tf.fill((self.num_nodes, ), p.post_dist.mean)
+                if var is None:
+                    var = tf.fill((self.num_nodes, ), p.post_dist.var)
 
-            init_mean.append(tf.cast(mean, tf.float32))
-            init_var.append(tf.cast(var, tf.float32))
+                init_mean.append(tf.cast(mean, tf.float32))
+                init_var.append(tf.cast(var, tf.float32))
 
-        # Make shape [W, P]
-        init_mean = tf.stack(init_mean, axis=-1)
-        init_var = tf.stack(init_var, axis=-1)
+            # Make shape [W, P]
+            init_mean = tf.stack(init_mean, axis=-1)
+            init_var = tf.stack(init_var, axis=-1)
+            init_cov = tf.linalg.diag(init_var)
 
         self.mean = tf.Variable(init_mean, dtype=tf.float32, name="post_mean")
 
-        # If we want to optimize this using tensorflow we should build it up as in
-        # SVB to ensure it is always positive definite. The analytic approach
-        # guarantees this automatically (I think!)
         if kwargs.get("force_positive_var", False):
+            # If we want to optimize this using tensorflow we should build it up as in
+            # SVB to ensure it is always positive definite. The analytic approach
+            # guarantees this automatically (I think!)
+            # FIXME Note that we are not initializing the off diag elements yet
             self.log_var = tf.Variable(tf.math.log(init_var), name="post_log_var")
             self.var = tf.math.exp(self.log_var)
             self.std = tf.math.sqrt(self.var)
             self.std_diag = tf.linalg.diag(self.std)
-            cov_init = tf.zeros([self.num_nodes, self.num_params, self.num_params], dtype=tf.float32)
 
-            self.off_diag_vars = tf.Variable(cov_init, name="post_off_diag_cov")
+            init_cov_chol = tf.linalg.cholesky(init_cov)
+            self.off_diag_vars = tf.Variable(init_cov_chol, name="post_off_diag_cov")
             self.off_diag_cov_chol = tf.linalg.set_diag(tf.linalg.band_part(self.off_diag_vars, -1, 0),
                                                         tf.zeros([self.num_nodes, self.num_params]))
             self.off_diag_cov_chol = self.log_tf(self.off_diag_cov_chol, shape=True, force=False, name="offdiag")
@@ -119,7 +145,7 @@ class MVNPosterior(LogBase):
             self.cov = tf.matmul(tf.transpose(self.cov_chol, perm=(0, 2, 1)), self.cov_chol)
             self.cov = self.log_tf(self.cov, shape=True, force=False, name="cov")
         else:
-            self.cov = tf.Variable(tf.linalg.diag(init_var), dtype=tf.float32, name="post_cov")
+            self.cov = tf.Variable(init_cov, dtype=tf.float32, name="post_cov")
 
         self.prec = tf.linalg.inv(self.cov)
 

@@ -245,8 +245,8 @@ class Avb(LogBase):
     def _build_graph(self, **kwargs):
         # Set up prior and posterior
         self.tpts = tf.constant(self.tpts, dtype=tf.float32) # FIXME
-        self.noise_post = NoisePosterior(self.data_model, force_positive=kwargs.get("use_adam", False))
-        self.post = MVNPosterior(self.data_model, self.model.params, self.tpts, force_positive_var=kwargs.get("use_adam", False))
+        self.noise_post = NoisePosterior(self.data_model, force_positive=kwargs.get("use_adam", False), init=self.data_model.post_init)
+        self.post = MVNPosterior(self.data_model, self.model.params, self.tpts, force_positive_var=kwargs.get("use_adam", False), init=self.data_model.post_init)
 
         self.noise_prior = NoisePrior(s=kwargs.get("noise_s0", 1e6), c=kwargs.get("noise_c0", 1e-6))
         self.param_priors = [
