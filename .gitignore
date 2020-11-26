@@ -11,3 +11,5 @@ doc/doctrees
 *.nii
 examples/*_out
 .DS_Store
+examples/*out*
+
