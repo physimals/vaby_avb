@@ -56,7 +56,6 @@ handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(logging.Formatter('%(levelname)s : %(message)s'))
 logging.getLogger().addHandler(handler)
 
-# Run AVB inference
-avb = Avb(t, svb.VolumetricModel(DATA_NOISY), model, debug="--debug" in sys.argv, max_iterations=5000, param_overrides={"amp1" : {"prior_type" : "M"}})
-#avb = Avb(t, svb.VolumetricModel(DATA_NOISY), model, debug="--debug" in sys.argv, max_iterations=1)
+#avb = Avb(t, svb.VolumetricModel(DATA_NOISY), model, debug="--debug" in sys.argv, max_iterations=5000, param_overrides={"amp1" : {"prior_type" : "M"}})
+avb = Avb(t, svb.VolumetricModel(DATA_NOISY), model, debug="--debug" in sys.argv, max_iterations=20)
 avb.run(use_adam=True)
