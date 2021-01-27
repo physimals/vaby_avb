@@ -129,8 +129,8 @@ class MRFSpatialPrior(ParameterPrior):
         # mean at the voxel itself!
         # This is the equivalent of ApplyToMVN in Fabber
         node_mean = self.log_tf(tf.expand_dims(post.mean[:, idx], 1), name="node_mean", force=False, shape=True) # [W]
-        node_nn_total_weight = self.log_tf(tf.sparse_reduce_sum(self.laplacian_nodiag, axis=1), name="node_weight", force=False, shape=True) # [W]
-        spatial_mean = self.log_tf(tf.sparse_tensor_dense_matmul(self.laplacian_nodiag, node_mean), name="matmul", force=False, shape=True)
+        node_nn_total_weight = self.log_tf(tf.sparse.reduce_sum(self.laplacian_nodiag, axis=1), name="node_weight", force=False, shape=True) # [W]
+        spatial_mean = self.log_tf(tf.sparse.sparse_dense_matmul(self.laplacian_nodiag, node_mean), name="matmul", force=False, shape=True)
         spatial_mean = self.log_tf(tf.squeeze(spatial_mean, 1), name="matmul2", force=False, shape=True)
         spatial_mean = self.log_tf(spatial_mean / node_nn_total_weight, name="spmean", force=False, shape=True)
         spatial_prec = node_nn_total_weight * self.ak

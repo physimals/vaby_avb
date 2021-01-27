@@ -153,8 +153,6 @@ class Avb(LogBase):
         C0 = self.prior.cov
         m = self.post.mean
         m0 = self.prior.mean
-        from tensorflow.math import log, digamma, lgamma
-        from tensorflow.linalg import matmul, trace, slogdet
         to_voxels = self.data_model.nodes_to_voxels
 
         Fparts_vox = []
@@ -177,14 +175,14 @@ class Avb(LogBase):
 
         Fparts_vox.append(
             -0.5*s*c*(
-                tf.squeeze(to_voxels(tf.expand_dims(trace(matmul(C, self.JtJ)), 1)), 1)
+                tf.squeeze(to_voxels(tf.expand_dims(tf.linalg.trace(tf.linalg.matmul(C, self.JtJ)), 1)), 1)
             )
         )
 
         # Fabber: 1st & 2nd terms in expectedLogPosteriorParts[0]
         #         3nd term in expectedLogPosteriorParts[3]
         Fparts_vox.append(
-            0.5*N*(log(s) + digamma(c) - log(2*math.pi)) # [V]
+            0.5*N*(tf.math.log(s) + tf.math.digamma(c) - tf.math.log(2*math.pi)) # [V]
         )
 
         # KL divergence of model posterior 
@@ -194,15 +192,15 @@ class Avb(LogBase):
         #         3rd term in expectedLogPosteriorParts[3]
         #         4th term in expectedLogThetaDist
         Fparts_node.append(
-            -0.5*(-slogdet(C)[1] + trace(matmul(P0, C))) + 0.5*(slogdet(P0)[1] + NP) # [W]
+            -0.5*(-tf.linalg.slogdet(C)[1] + tf.linalg.trace(tf.linalg.matmul(P0, C))) + 0.5*(tf.linalg.slogdet(P0)[1] + NP) # [W]
         )
 
         # -0.5 (m-m0)T P0 (m-m0)
         # Fabber: in expectedLogPosteriorParts[4]
         Fparts_node.append(
             -0.5 * tf.reshape(
-              matmul(
-                matmul(
+              tf.linalg.matmul(
+                tf.linalg.matmul(
                     tf.reshape(m - m0, (self.nn, 1, self.nparam)), 
                     P0
                 ),
@@ -222,7 +220,7 @@ class Avb(LogBase):
         #         7th term in expectedLogPosteriorParts[9]
         #         8th term in expectedLogPosteriorParts[9]
         Fparts_vox.append(
-            -(c-1)*(log(s) + digamma(c)) + c*log(s) + c + lgamma(c) + (c0-1)*(log(s) + digamma(c)) -lgamma(c0) - c0*log(s0) - s*c / s0 # [V]
+            -(c-1)*(tf.math.log(s) + tf.math.digamma(c)) + c*tf.math.log(s) + c + tf.math.lgamma(c) + (c0-1)*(tf.math.log(s) + tf.math.digamma(c)) -tf.math.lgamma(c0) - c0*tf.math.log(s0) - s*c / s0 # [V]
         )
 
         # Fabber: have extra factor of +0.5*Np*log 2PI in expectedLogThetaDist
@@ -283,7 +281,7 @@ class Avb(LogBase):
         self.modelfit = tf.squeeze(self.data_model.nodes_to_voxels_ts(tf.expand_dims(self.modelfit_nodes, 1)), 1) # [V, B]
         self.J = self.log_tf(self.J_nodes, force=False, shape=True, name="J", summarize=1000) # FIXME? [V, B, P]
         self.Jt = tf.transpose(self.J, (0, 2, 1)) # [W, P, B]
-        self.JtJ = self.log_tf(tf.matmul(self.Jt, self.J), shape=True, force=False, name="jtj") # [W, P, P]
+        self.JtJ = self.log_tf(tf.linalg.matmul(self.Jt, self.J), shape=True, force=False, name="jtj") # [W, P, P]
         data = self.log_tf(tf.constant(self.data, dtype=tf.float32), name="data", force=False, shape=True)
         self.k = self.log_tf(data - self.modelfit, name="k", force=False, shape=True) # [V, B, P]
 

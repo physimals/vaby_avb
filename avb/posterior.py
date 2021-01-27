@@ -106,7 +106,7 @@ class MVNPosterior(LogBase):
                 if p.post_init is not None: # FIXME won't work if nodes != voxels
                     mean, var = p.post_init(idx, tpts, data_model.data_flattened)
                     if mean is not None:
-                        mean = p.post_dist.transform.int_values(mean, ns=tf)
+                        mean = p.post_dist.transform.int_values(mean, ns=tf.math)
                     if var is not None:
                         # FIXME transform
                         pass
