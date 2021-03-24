@@ -9,3 +9,4 @@ doc/html
 doc/doctrees
 .DS_Store
 examples/*_out
+examples/*.nii.gz
