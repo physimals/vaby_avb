@@ -1,4 +1,4 @@
-avb/_version.py
+_version.py
 build
 *.pyc
 .pytest_cache
