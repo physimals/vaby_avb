@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Setup script for avb
+Setup script for varbay_avb
 """
 import os
 import subprocess
@@ -10,7 +10,7 @@ import io
 from setuptools import setup
 from setuptools import find_packages
 
-MODULE = 'avb'
+MODULE = 'varbay_avb'
 
 def get_filetext(rootdir, filename):
     """ Get the text of a local file """
@@ -75,7 +75,7 @@ def get_version(rootdir):
 module_dir = os.path.abspath(os.path.dirname(__file__))
 
 kwargs = {
-    'name' : 'avb',
+    'name' : 'varbay_avb',
     'version' : get_version(module_dir),
     'description' : 'Python implementation of analytic variational Bayesian inference for a nonlinear forward model',
     'long_description' : get_filetext(module_dir, 'README.md'),
@@ -90,12 +90,7 @@ kwargs = {
     },
     'entry_points' : {
         'console_scripts' : [
-            "avb=avb.main:main",
-        ],
-        'avb.models' : [
-            "exp=avb.models.exp:MultiExpModel",
-            "biexp=avb.models.exp:BiExpModel",
-            "aslrest=avb.models.aslrest:AslRestModel",
+            "avb=varbay_avb.main:main",
         ],
     },
     'classifiers' : [

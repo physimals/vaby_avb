@@ -10,7 +10,7 @@ import numpy as np
 import scipy.special
 import tensorflow as tf
 
-from svb.utils import LogBase
+from varbay.utils import LogBase
 
 class Prior(LogBase):
 
@@ -190,6 +190,7 @@ class Avb(LogBase):
 
         prior_means = [p.prior_dist.mean for p in self.model.params]
         prior_vars = [p.prior_dist.var for p in self.model.params]
+
         self.prior = Prior(prior_means, prior_vars,
                             kwargs.get("noise_s0", 1e6), kwargs.get("noise_c0", 1e-6))
 

@@ -16,9 +16,10 @@ import re
 import nibabel as nib
 import numpy as np
 
+from varbay.utils import ValueList
+from varbay import DataModel, get_model_class
+
 from . import __version__, Avb
-from svb.utils import ValueList
-from svb import DataModel, get_model_class
 
 USAGE = "avb <options>"
 
