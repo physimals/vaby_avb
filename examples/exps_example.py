@@ -10,13 +10,11 @@ import sys
 import numpy as np
 import nibabel as nib
 
-from avb import run
-import svb
+from varbay_avb import run
+import varbay
 
-# This starts the random number generator off with the same seed value
-# each time, so the results are repeatable. However it is worth changing
-# the seed (or simply removing this line) to see how different data samples
-# affect the results
+# Uncomment line below to start the random number generator off with the same seed value
+# each time, for repeatable results.
 #np.random.seed(0)
 
 # Ground truth parameters
@@ -29,7 +27,7 @@ NOISE_STD_TRUTH = np.sqrt(NOISE_VAR_TRUTH)
 # Gaussian distribution. Reducing the number of samples should make
 # the inference less 'confident' - i.e. the output variances for
 # MU and BETA will increase
-model = svb.get_model_class("exp")(None)
+model = varbay.get_model_class("exp")(None)
 N = 100
 DT = 2.0 / N
 NX, NY, NZ = 10, 10, 10
