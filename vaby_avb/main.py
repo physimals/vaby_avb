@@ -16,8 +16,8 @@ import re
 import nibabel as nib
 import numpy as np
 
-from varbay.utils import ValueList
-from varbay import DataModel, get_model_class
+from vaby.utils import ValueList
+from vaby import DataModel, get_model_class
 
 from . import __version__, Avb
 

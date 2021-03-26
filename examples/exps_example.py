@@ -10,8 +10,8 @@ import sys
 import numpy as np
 import nibabel as nib
 
-from varbay_avb import run
-import varbay
+from vaby_avb import run
+import vaby
 
 # Uncomment line below to start the random number generator off with the same seed value
 # each time, for repeatable results.
@@ -27,7 +27,7 @@ NOISE_STD_TRUTH = np.sqrt(NOISE_VAR_TRUTH)
 # Gaussian distribution. Reducing the number of samples should make
 # the inference less 'confident' - i.e. the output variances for
 # MU and BETA will increase
-model = varbay.get_model_class("exp")(None)
+model = vaby.get_model_class("exp")(None)
 N = 100
 DT = 2.0 / N
 NX, NY, NZ = 10, 10, 10

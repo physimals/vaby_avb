@@ -10,7 +10,7 @@ import numpy as np
 import scipy.special
 import tensorflow as tf
 
-from varbay.utils import LogBase
+from vaby.utils import LogBase
 
 class Prior(LogBase):
 
