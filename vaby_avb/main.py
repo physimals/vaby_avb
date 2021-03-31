@@ -20,6 +20,9 @@ from vaby.utils import ValueList
 from vaby import DataModel, get_model_class
 
 from . import __version__, Avb
+from vaby.utils import ValueList
+from vaby import get_model_class
+from vaby.data import DataModel
 
 USAGE = "avb <options>"
 
@@ -60,6 +63,17 @@ class AvbArgumentParser(argparse.ArgumentParser):
                          help="Display help")
         
         group = self.add_argument_group("Inference options")
+        group.add_argument("--max-iterations",
+                         help="Max number of iterations",
+                         type=int, default=20)
+        group.add_argument("--use-adam", action="store_true", default=False,
+                         help="Directly maximise free energy using Adam optimizer")
+        group.add_argument("--learning-rate",
+                         help="Learning rate for Adam optimizer",
+                         type=float, default=0.5)
+        group.add_argument("--init-leastsq",
+                         help="Do an initial least-squares fit before optimizing full free energy cost",
+                         action="store_true", default=False)
 
         group = self.add_argument_group("Output options")
         group.add_argument("--save-var",
@@ -174,14 +188,14 @@ def main():
         welcome = "Welcome to AVB %s" % __version__
         print(welcome)
         print("=" * len(welcome))
-        runtime, _, _ = run(log_stream=sys.stdout, **vars(options))
+        runtime, _ = run(log_stream=sys.stdout, **vars(options))
         print("FINISHED - runtime %.3fs" % runtime)
     except (RuntimeError, ValueError) as exc:
         sys.stderr.write("ERROR: %s\n" % str(exc))
         import traceback
         traceback.print_exc()
 
-def run(data, model_name, output, mask=None, **kwargs):
+def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
     """
     Run model fitting on a data set
 
@@ -202,29 +216,33 @@ def run(data, model_name, output, mask=None, **kwargs):
 
     # Initialize the data model which contains data dimensions, number of time
     # points, list of unmasked voxels, etc
-    data_model = DataModel(data, mask, **kwargs)
+    if surfaces is None: 
+        data_model = DataModel(data, mask, **kwargs)
+    else:
+        raise NotImplementedError("surface mode")
+        #data_model = SurfaceModel(data, surfaces, mask, **kwargs)
     
     # Create the generative model
     fwd_model = get_model_class(model_name)(data_model, **kwargs)
     fwd_model.log_config()
 
-    # Get the time points from the model
+    # Get the time points from the model in node space
     tpts = fwd_model.tpts()
 
     history = kwargs.get("save_free_energy_history", False) or kwargs.get("save_param_history", False)
     avb = Avb(tpts, data_model, fwd_model, **kwargs)
-    runtime, _ret = _runtime(avb.run, history=history)
+    runtime, _ret = _runtime(avb.run, record_history=history, **kwargs)
     log.info("DONE: %.3fs", runtime)
 
     _makedirs(output, exist_ok=True)
     params = [p.name for p in fwd_model.params]
     
     # Write out parameter mean and variance images
-    means = avb.model_means
-    variances = avb.model_vars
+    mean = avb.model_mean
+    variances = avb.model_var
     for idx, param in enumerate(params):
         if kwargs.get("save_mean", False):
-            data_model.nifti_image(means[idx]).to_filename(os.path.join(output, "mean_%s.nii.gz" % param))
+            data_model.nifti_image(mean[idx]).to_filename(os.path.join(output, "mean_%s.nii.gz" % param))
         if kwargs.get("save_var", False):
             data_model.nifti_image(variances[idx]).to_filename(os.path.join(output, "var_%s.nii.gz" % param))
         if kwargs.get("save_std", False):
@@ -232,32 +250,32 @@ def run(data, model_name, output, mask=None, **kwargs):
 
     if kwargs.get("save_noise", False):
         if kwargs.get("save_mean", False):
-            data_model.nifti_image(avb.noise_means).to_filename(os.path.join(output, "mean_noise.nii.gz"))
+            data_model.nifti_image(avb.noise_mean).to_filename(os.path.join(output, "mean_noise.nii.gz"))
         if kwargs.get("save_var", False):
-            data_model.nifti_image(avb.noise_vars).to_filename(os.path.join(output, "var_noise.nii.gz"))
+            data_model.nifti_image(avb.noise_var).to_filename(os.path.join(output, "var_noise.nii.gz"))
         if kwargs.get("save_std", False):
-            data_model.nifti_image(np.sqrt(avb.noise_vars)).to_filename(os.path.join(output, "std_noise.nii.gz"))
+            data_model.nifti_image(np.sqrt(avb.noise_var)).to_filename(os.path.join(output, "std_noise.nii.gz"))
 
     # Write out voxelwise free energy (and history if required)
     if kwargs.get("save_free_energy", False):
-        data_model.nifti_image(avb.free_energy).to_filename(os.path.join(output, "free_energy.nii.gz"))
+        data_model.nifti_image(avb.free_energy_vox).to_filename(os.path.join(output, "free_energy.nii.gz"))
     if kwargs.get("save_free_energy_history", False):
-        data_model.nifti_image(avb.history["free_energy"]).to_filename(os.path.join(output, "free_energy_history.nii.gz"))
+        data_model.nifti_image(avb.history["free_energy_vox"]).to_filename(os.path.join(output, "free_energy_history.nii.gz"))
 
     # Write out voxelwise parameter history
     if kwargs.get("save_param_history", False):
         for idx, param in enumerate(params):
-            data_model.nifti_image(avb.history["model_means"][idx]).to_filename(os.path.join(output, "mean_%s_history.nii.gz" % param))
+            data_model.nifti_image(avb.history["model_mean"][idx]).to_filename(os.path.join(output, "mean_%s_history.nii.gz" % param))
 
     # Write out modelfit
     if kwargs.get("save_model_fit", False):
         data_model.nifti_image(avb.modelfit).to_filename(os.path.join(output, "modelfit.nii.gz"))
 
     # Write out posterior
-    #if kwargs.get("save_post", False):
-    #    post_data = data_model.posterior_data(avb.post.all_means, avb.post.all_cov)
-    #    log.info("Posterior data shape: %s", post_data.shape)
-    #    data_model.nifti_image(post_data).to_filename(os.path.join(output, "posterior.nii.gz"))
+    if kwargs.get("save_post", False):
+        post_data = data_model.posterior_data(avb.all_mean, avb.all_cov)
+        log.info("Posterior data shape: %s", post_data.shape)
+        data_model.nifti_image(post_data).to_filename(os.path.join(output, "posterior.nii.gz"))
 
     # Write out runtime
     if kwargs.get("save_runtime", False):

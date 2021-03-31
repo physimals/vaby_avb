@@ -33,7 +33,7 @@ model = vaby.get_model_class("exp")(None)
 N = 100
 DT = 0.02
 t = np.array([float(t)*DT for t in range(N)])
-DATA_CLEAN = model.ievaluate(PARAMS_TRUTH, t)
+DATA_CLEAN = model.evaluate(PARAMS_TRUTH, t).numpy()
 DATA_NOISY = DATA_CLEAN + np.random.normal(0, NOISE_STD_TRUTH, [N])
 print("Time values:")
 print(t)
