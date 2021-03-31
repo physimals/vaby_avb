@@ -265,9 +265,9 @@ class NoisePrior(LogBase):
         LogBase.__init__(self)
         self.s = tf.constant(s, dtype=tf.float32)
         self.c = tf.constant(c, dtype=tf.float32)
-
-    def mean_prec(self):
-        return self.c*self.s, 1/(self.s*self.s*self.c)
+        self.mean = self.c*self.s
+        self.var = self.s*self.s*self.c
+        self.prec = 1/self.var
 
 class MVNPrior(LogBase):
     """
