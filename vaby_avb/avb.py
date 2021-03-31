@@ -41,39 +41,30 @@ class Avb(LogBase):
         self.debug = kwargs.get("debug", False)
         self.maxits = kwargs.get("max_iterations", 10)
 
-    def debug_output(self, text, J=None):
+    def debug_output(self, text):
         if self.debug:
             self.log.debug(text)
-            self.log.debug("Prior mean\n", self.prior.mean)
-            self.log.debug("Prior prec\n", self.prior.prec)
-            self.log.debug("Post mean\n", self.post.mean)
-            self.log.debug("Post prec\n", self.post.prec)
-            noise_mean, noise_prec = self.noise_prior.mean_prec()
-            self.log.debug("Noise prior mean\n", noise_mean)
-            self.log.debug("Noise prior prec\n", noise_prec)
-            noise_mean, noise_prec = self.noise_post.mean_prec()
-            self.log.debug("Noise post mean\n", noise_mean)
-            self.log.debug("Noise post prec\n", noise_prec)
-            if J is not None:
-                self.log.debug("Jacobian\n", J)
+            self.log.debug("Prior mean: %s\n", self.prior.mean)
+            self.log.debug("Prior prec: %s\n", self.prior.prec)
+            self.log.debug("Post mean: %s\n", self.post.mean)
+            self.log.debug("Post prec: %s\n", self.post.prec)
+            self.log.debug("Noise prior mean: %s\n", self.noise_prior.mean)
+            self.log.debug("Noise prior prec: %s\n", self.noise_prior.prec)
+            self.log.debug("Noise post mean: %s\n", self.noise_post.mean)
+            self.log.debug("Noise post prec: %s\n", self.noise_post.prec)
+            self.log.debug("Jacobian:\n%s\n", self.J)
 
-    def jacobian(self, params, tpts):
+    def jacobian(self):
         """
         Numerical differentiation to calculate Jacobian matrix
         of partial derivatives of model prediction with respect to
         parameters
 
-        :param params Sequence of parameter values arrays, one for each parameter.
-                      Each array is [W,1] array where W is the number of parameter vertices
-                      may be supplied as a [P,W,1] array where P is the number of
-                      parameters.
-        :param tpts: Time values to evaluate the model at, supplied as an array of shape
-                     [1,B] (if time values at each node are identical) or [W,B]
-                     otherwise.
-
         :return: Jacobian matrix [W, B, P]
         """
         J = []
+        mean_trans = tf.transpose(self.post.mean, (1, 0)) # [P, W]
+        params = tf.expand_dims(mean_trans, axis=-1)
         min_delta = tf.fill(tf.shape(params), 1e-5)
         delta = tf.math.abs(params * 1e-5) # [P, W, 1]
         delta = tf.where(delta < 1e-5, min_delta, delta)
@@ -91,7 +82,7 @@ class Avb(LogBase):
             minus_model = self.inference_to_model(minus_param)
             #print(param_idx, plus_model.numpy(), minus_model.numpy())
             # diff [W, B]
-            diff = self.model.evaluate(plus_model, tpts) - self.model.evaluate(minus_model, tpts)
+            diff = self.model.evaluate(plus_model, self.tpts) - self.model.evaluate(minus_model, self.tpts)
             #print("Delta\n", delta[param_idx])
             #print("Diff\n", diff)
             J.append(diff / (2*delta[param_idx]))
@@ -101,7 +92,8 @@ class Avb(LogBase):
         #print(J.numpy())
         return J
 
-    def jacobian2(self, modelfit, mean):
+    @tf.function
+    def jacobian_autodiff(self):
         """
         Experimental jacobian using Tensorflow. Doesn't batch over voxels currently
         that might need TF2
@@ -109,12 +101,14 @@ class Avb(LogBase):
         :param modelfit: [W, B]
         :param mean: [W, P]
         """
-        J = tf.stack([tf.reshape(jacobian(modelfit[0], mean), (self.nt, self.nparam))])
-        #J = tf.stack([
-        #    jacobian(modelfit[t], mean[t])
-        #    for t in range(self.nv)
-        #])
-        return self.log_tf(J, shape=True, force=False)
+        with tf.GradientTape() as tape:
+            mean_trans = tf.transpose(self.post.mean, (1, 0)) # [P, W]
+            params_model = self.inference_to_model(tf.expand_dims(mean_trans, axis=-1))
+            modelfit = self.model.evaluate(params_model, self.tpts)
+
+        J = tape.batch_jacobian(modelfit, self.post.mean)
+        #print(J)
+        return J
 
     def inference_to_model(self, inference_params, idx=None):
         """
@@ -285,8 +279,8 @@ class Avb(LogBase):
         self.k = self.data - self.modelfit # [V, B, P]
 
     def linearise(self):
-        mean_trans = tf.transpose(self.post.mean, (1, 0)) # [P, W]
-        self.J = self.jacobian(tf.expand_dims(mean_trans, axis=-1), self.tpts) # [W, B, P]
+        self.J = self.jacobian() # [W, B, P]
+        #self.J = self.jacobian_autodiff() # [W, B, P]
         self.Jt = tf.transpose(self.J, (0, 2, 1)) # [W, P, B]
         self.JtJ = tf.linalg.matmul(self.Jt, self.J) # [W, P, P]
 
@@ -324,11 +318,11 @@ class Avb(LogBase):
             # Update model parameters
             self.orig_mean = self.post.mean.numpy()
             self.post.update(self)
-            self.debug_output("Updated theta", self.J)
+            self.debug_output("Updated theta")
     
             # Update noise parameters
             self.noise_post.update(self)
-            self.debug_output("Updated noise", self.J)
+            self.debug_output("Updated noise")
 
             # Update priors (e.g. spatial, ARD)
             self.prior_updates = []
@@ -366,8 +360,6 @@ class Avb(LogBase):
     def log_iter(self, iter, history):
         iter_data = {"iter" : iter}
         attrs = ["model_mean", "model_var", "noise_mean", "noise_var", "free_energy_vox", "free_energy_node", "cost_fe"]
-        #fmt = "Iteration %(iter)i: params=%(model_mean)s, var=%(model_var)s, noise mean=%(noise_mean)e, var=%(noise_var)e, F=%(free_energy_vox)e, %(free_energy_node)e, %(cost_fe)e"
-        attrs = ["model_mean", "model_var", "noise_mean", "noise_var", "free_energy_vox", "free_energy_node", "cost_fe"]
         fmt = "Iteration %(iter)i: params=%(model_mean)s, var=%(model_var)s, noise mean=%(noise_mean)e, var=%(noise_var)e, F=%(free_energy_vox)e, %(free_energy_node)e, %(cost_fe)e"
 
         # Pick up any spatial smoothing params to output
@@ -382,9 +374,10 @@ class Avb(LogBase):
             data = getattr(self, attr).numpy()
             if data.size > 1:
                 # voxelwise data
-                data = np.mean(data, axis=-1)
-            iter_data[attr] = data
+                iter_data[attr] = np.mean(data, axis=-1)
+            else:
+                iter_data[attr] = data
             if history:
                 if attr not in self.history: self.history[attr] = []
-                self.history[attr].append(voxelwise_data)
+                self.history[attr].append(data)
         self.log.info(fmt % iter_data)
