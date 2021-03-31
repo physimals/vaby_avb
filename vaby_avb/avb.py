@@ -180,7 +180,7 @@ class Avb(LogBase):
 
         Fparts_vox.append(
             -0.5*s*c*(
-                tf.squeeze(to_voxels(tf.expand_dims(tf.linalg.trace(tf.linalg.matmul(C, self.JtJ())), 1)), 1)
+                tf.squeeze(to_voxels(tf.expand_dims(tf.linalg.trace(tf.linalg.matmul(C, self.JtJ)), 1)), 1)
             )
         )
 
@@ -245,7 +245,7 @@ class Avb(LogBase):
 
         return F_vox, F_node
 
-    def build_graph(self, **kwargs):
+    def create_prior_post(self, **kwargs):
         # Set up prior and posterior
         self.tpts = tf.constant(self.tpts, dtype=tf.float32) # FIXME
         self.noise_post = NoisePosterior(self.data_model, force_positive=kwargs.get("use_adam", False), init=self.data_model.post_init)
@@ -290,14 +290,10 @@ class Avb(LogBase):
         self.Jt = tf.transpose(self.J, (0, 2, 1)) # [W, P, B]
         self.JtJ = tf.linalg.matmul(self.Jt, self.J) # [W, P, P]
 
-    def all_mean_cov(self):
-        # Convenience for outputing combined posterior
-        return self.all_post.mean, self.all_post.cov
- 
-    def cost_fe(self):
-        free_energy_vox, free_energy_node = self.free_energy()
-        return -tf.reduce_mean(free_energy_vox) - tf.reduce_mean(free_energy_node)
-        
+    def calc_free_energy(self):
+        self.free_energy_vox, self.free_energy_node = self.free_energy()
+        self.cost_fe = -tf.reduce_mean(self.free_energy_vox) - tf.reduce_mean(self.free_energy_node)
+
     def cost_leastsq(self):
         return tf.reduce_sum(tf.square(self.k), axis=-1)
 
@@ -321,6 +317,7 @@ class Avb(LogBase):
         # Use analytic update equations to update model and noise parameters iteratively
         self.linearise()
         self.evaluate()
+        self.calc_free_energy()
         self.log_iter(0, record_history)
         for idx in range(self.maxits):
 
@@ -341,17 +338,12 @@ class Avb(LogBase):
 
             self.linearise()
             self.evaluate()
+            self.calc_free_energy()
             self.log_iter(idx+1, record_history)
 
     def run(self, record_history=False, **kwargs):
         self.history = {}
-        
-        self.build_graph(**kwargs)
-        #self.sess = tf.Session()
-        #self.sess.run(self.init)
-
-        #self.log_iter(0, record_history)
-        self.debug_output("Start")
+        self.create_prior_post(**kwargs)
 
         if kwargs.get("use_adam", False):
             if kwargs.get("init_leastsq", False):
@@ -367,16 +359,16 @@ class Avb(LogBase):
                 self.history[item] = np.array(item_history).transpose(trans_axes)
 
         # Make final output into Numpy arrays
-        #for attr in ("model_mean", "model_var", "noise_mean", "noise_var", "free_energy_vox", "free_energy_node",
-        #             "modelfit", "all_mean", "all_cov"):
-        #    setattr(self, attr, getattr(self, attr)().numpy())
+        for attr in ("model_mean", "model_var", "noise_mean", "noise_var", "free_energy_vox", "free_energy_node",
+                     "modelfit"):
+            setattr(self, attr, getattr(self, attr).numpy())
 
     def log_iter(self, iter, history):
         iter_data = {"iter" : iter}
-        #attrs = ["model_mean", "model_var", "noise_mean", "noise_var", "free_energy_vox", "free_energy_node", "cost_fe"]
+        attrs = ["model_mean", "model_var", "noise_mean", "noise_var", "free_energy_vox", "free_energy_node", "cost_fe"]
         #fmt = "Iteration %(iter)i: params=%(model_mean)s, var=%(model_var)s, noise mean=%(noise_mean)e, var=%(noise_var)e, F=%(free_energy_vox)e, %(free_energy_node)e, %(cost_fe)e"
-        attrs = ["model_mean", "model_var", "noise_mean", "noise_var"]
-        fmt = "Iteration %(iter)i: params=%(model_mean)s, var=%(model_var)s, noise mean=%(noise_mean)e, var=%(noise_var)e, "
+        attrs = ["model_mean", "model_var", "noise_mean", "noise_var", "free_energy_vox", "free_energy_node", "cost_fe"]
+        fmt = "Iteration %(iter)i: params=%(model_mean)s, var=%(model_var)s, noise mean=%(noise_mean)e, var=%(noise_var)e, F=%(free_energy_vox)e, %(free_energy_node)e, %(cost_fe)e"
 
         # Pick up any spatial smoothing params to output
         # FIXME ugly and hacky
