@@ -35,7 +35,7 @@ class ParameterPrior(LogBase):
     Gaussian prior for a single model parameter
     
     :attr mean: Mean value [W] or [1]
-    :attr variance: Variance [W] or [1]
+    :attr var: Variance [W] or [1]
     """
 
     def free_energy(self):
@@ -44,16 +44,17 @@ class ParameterPrior(LogBase):
         """
         return 0
 
-    def get_updates(self, post):
+    def update(self, avb):
         """
         Update prior in analytic update mode
 
-        Required for adaptive priors, e.g. spatial, ARD
+        Required for adaptive priors, e.g. spatial, ARD. This method should
+        use tf.assign to update any tf.Variable instances that control
+        it's operation, and also update any dependency tensors.
 
-        :param post: Current posterior
-        :return: Sequence of tuples: (variable to update, tensor to update from)
+        :param avb: Avb object
         """
-        return []
+        pass
 
 class NormalPrior(ParameterPrior):
     """
@@ -76,7 +77,7 @@ class NormalPrior(ParameterPrior):
             variance = np.full((nn,), variance)
 
         self.mean = tf.constant(mean, dtype=np.float32)
-        self.variance = tf.constant(variance, dtype=np.float32)
+        self.var = tf.constant(variance, dtype=np.float32)
 
 class MRFSpatialPrior(ParameterPrior):
     """
@@ -118,10 +119,12 @@ class MRFSpatialPrior(ParameterPrior):
 
         # Set up spatial smoothing parameter - infer the log so always positive
         ak_init = kwargs.get("ak", 1e-5)
-        if  kwargs.get("infer_ak", True):
+        if kwargs.get("infer_ak", True):
             self.log_ak = tf.Variable(np.log(ak_init), name="log_ak", dtype=tf.float32)
         else:
             self.log_ak = tf.constant(np.log(ak_init), name="log_ak", dtype=tf.float32)
+
+    def _update_deps(self):
         self.ak = tf.exp(self.log_ak)
 
         # For the spatial mean we essentially need the (weighted) average of 
@@ -135,10 +138,10 @@ class MRFSpatialPrior(ParameterPrior):
         spatial_mean = spatial_mean / node_nn_total_weight
         spatial_prec = node_nn_total_weight * self.ak
 
-        self.variance = 1 / (1/init_variance + spatial_prec)
-        self.mean = self.variance * spatial_prec * spatial_mean
+        self.var = 1 / (1/init_variance + spatial_prec)
+        self.mean = self.var * spatial_prec * spatial_mean
 
-    def get_updates(self, post):
+    def update(self, AVB):
         """
         Update the global spatial precision when using analytic update mode
 
@@ -150,10 +153,10 @@ class MRFSpatialPrior(ParameterPrior):
         :return: Sequence of tuples: (variable to update, tensor to update from)
         """
         # Posterior variance for parameter [W]
-        sigmaK = post.cov[:, self.idx, self.idx]
+        sigmaK = avb.post.cov[:, self.idx, self.idx]
 
         # Posterior mean for parameter [W]
-        wK = tf.expand_dims(post.mean[:, self.idx], 1)
+        wK = tf.expand_dims(avb.post.mean[:, self.idx], 1)
 
         # First term for gk:   Tr(sigmaK*S'*S) (note our Laplacian is S'*S directly)
         trace_term = tf.reduce_sum(sigmaK * self.laplacian_diagonal)
@@ -201,7 +204,8 @@ class MRFSpatialPrior(ParameterPrior):
         #    aK = aKMax
 
         #self.log.info("MRFSpatialPrior::Calculate aK %i: New aK: %e", self.idx, ak)
-        return [(self.log_ak, tf.log(aK),)]
+        self.log_ak.assign(tf.log(aK))
+        self._update_deps()
 
 class ARDPrior(ParameterPrior):
     """
@@ -219,16 +223,18 @@ class ARDPrior(ParameterPrior):
 
         # Set up inferred precision parameter phi - infer the log so always positive
         self.log_phi = tf.Variable(default, name="log_phi", dtype=tf.float32)
+
+    def _update_deps(self):
         self.phi = tf.clip_by_value(tf.exp(self.log_phi), 0, 1e6)
 
         # FIXME hack to make phi get printed after each iteration using code written for
         # the MRF spatial prior
         self.ak = tf.reduce_mean(self.phi)
 
-        self.variance = 1/self.phi
+        self.var = 1/self.phi
         self.mean = tf.fill((nn,), tf.constant(0.0, dtype=tf.float32))
 
-    def get_updates(self, post):
+    def update(self, avb):
         """
         Update the ARD precision when using analytic update mode
 
@@ -240,7 +246,8 @@ class ARDPrior(ParameterPrior):
         mean = post.mean[:, self.idx]
         var = post.cov[:, self.idx, self.idx]
         new_var = tf.square(mean) + var
-        return [(self.log_phi, tf.log(1/new_var),)]
+        self.log_phi.assign(tf.log(1/new_var))
+        self._update_deps()
 
     def free_energy(self):
         # See appendix D of Fabber paper
@@ -292,6 +299,6 @@ class MVNPrior(LogBase):
         LogBase.__init__(self)
 
         self.mean = tf.stack([p.mean for p in param_priors], axis=1)
-        self.var = tf.stack([p.variance for p in param_priors], axis=1)
+        self.var = tf.stack([p.var for p in param_priors], axis=1)
         self.cov = tf.linalg.diag(self.var)
         self.prec = tf.linalg.inv(self.cov)
