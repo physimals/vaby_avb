@@ -124,24 +124,29 @@ class MRFSpatialPrior(ParameterPrior):
         else:
             self.log_ak = tf.constant(np.log(ak_init), name="log_ak", dtype=tf.float32)
 
-    def _update_deps(self):
+        self.ak = tf.exp(self.log_ak)
+        self.mean = tf.fill((self.n_nodes,), 0.0)
+        self.var = tf.fill((self.n_nodes,), 1/self.ak)
+
+    def _update_deps(self, avb):
         self.ak = tf.exp(self.log_ak)
 
         # For the spatial mean we essentially need the (weighted) average of 
         # nearest neighbour mean values. This does not involve the current posterior
         # mean at the voxel itself!
         # This is the equivalent of ApplyToMVN in Fabber
-        node_mean = tf.expand_dims(post.mean[:, idx], 1) # [W]
+        node_mean = tf.expand_dims(avb.post.mean[:, self.idx], 1) # [W]
         node_nn_total_weight = tf.sparse.reduce_sum(self.laplacian_nodiag, axis=1) # [W]
         spatial_mean = tf.sparse.sparse_dense_matmul(self.laplacian_nodiag, node_mean)
         spatial_mean = tf.squeeze(spatial_mean, 1)
         spatial_mean = spatial_mean / node_nn_total_weight
         spatial_prec = node_nn_total_weight * self.ak
 
-        self.var = 1 / (1/init_variance + spatial_prec)
+        #self.var = 1 / (1/init_variance + spatial_prec)
+        self.var = 1 / spatial_prec
         self.mean = self.var * spatial_prec * spatial_mean
 
-    def update(self, AVB):
+    def update(self, avb):
         """
         Update the global spatial precision when using analytic update mode
 
@@ -164,7 +169,7 @@ class MRFSpatialPrior(ParameterPrior):
         # Contribution from nearest neighbours - sum of differences
         # between voxel mean and neighbour mean multipled by the
         # neighbour weighting [W]
-        SwK = -tf.sparse_tensor_dense_matmul(self.laplacian, wK)
+        SwK = -tf.sparse.sparse_dense_matmul(self.laplacian, wK)
 
         # For MRF spatial prior the spatial precision matrix S'S is handled
         # directly so we are effectively calculating wK * D * wK where
@@ -204,8 +209,8 @@ class MRFSpatialPrior(ParameterPrior):
         #    aK = aKMax
 
         #self.log.info("MRFSpatialPrior::Calculate aK %i: New aK: %e", self.idx, ak)
-        self.log_ak.assign(tf.log(aK))
-        self._update_deps()
+        self.log_ak.assign(tf.math.log(aK))
+        self._update_deps(avb)
 
 class ARDPrior(ParameterPrior):
     """
@@ -243,10 +248,10 @@ class ARDPrior(ParameterPrior):
         :param post: Current posterior
         :return: Sequence of tuples: (variable to update, tensor to update from)
         """
-        mean = post.mean[:, self.idx]
-        var = post.cov[:, self.idx, self.idx]
+        mean = avb.post.mean[:, self.idx]
+        var = avb.post.cov[:, self.idx, self.idx]
         new_var = tf.square(mean) + var
-        self.log_phi.assign(tf.log(1/new_var))
+        self.log_phi.assign(tf.math.log(1/new_var))
         self._update_deps()
 
     def free_energy(self):
