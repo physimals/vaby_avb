@@ -40,6 +40,7 @@ class Avb(LogBase):
         self.nparam = len(self.model.params)
         self.debug = kwargs.get("debug", False)
         self.maxits = kwargs.get("max_iterations", 10)
+        self.progress_cb = kwargs.get("progress_cb", None)
 
     def debug_output(self, text):
         if self.debug:
@@ -314,7 +315,6 @@ class Avb(LogBase):
         self.calc_free_energy()
         self.log_iter(0, record_history)
         for idx in range(self.maxits):
-
             # Update model parameters
             self.orig_mean = self.post.mean.numpy()
             self.post.update(self)
@@ -327,13 +327,14 @@ class Avb(LogBase):
             # Update priors (e.g. spatial, ARD)
             self.prior_updates = []
             for prior in self.param_priors:
-                for var, value in prior.get_updates(self.post):
-                    var.assign(value)
+                prior.update(self)
 
             self.linearise()
             self.evaluate()
             self.calc_free_energy()
             self.log_iter(idx+1, record_history)
+            if self.progress_cb is not None:
+                self.progress_cb(float(idx)/float(self.maxits))
 
     def run(self, record_history=False, **kwargs):
         self.history = {}
