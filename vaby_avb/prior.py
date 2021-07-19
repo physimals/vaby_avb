@@ -44,7 +44,7 @@ class ParameterPrior(LogBase):
         """
         return 0
 
-    def update(self, avb):
+    def avb_update(self, avb):
         """
         Update prior in analytic update mode
 
@@ -78,6 +78,7 @@ class NormalPrior(ParameterPrior):
 
         self.mean = tf.constant(mean, dtype=np.float32)
         self.var = tf.constant(variance, dtype=np.float32)
+        self.vars = []
 
 class MRFSpatialPrior(ParameterPrior):
     """
@@ -121,8 +122,10 @@ class MRFSpatialPrior(ParameterPrior):
         ak_init = kwargs.get("ak", 1e-5)
         if kwargs.get("infer_ak", True):
             self.log_ak = tf.Variable(np.log(ak_init), name="log_ak", dtype=tf.float32)
+            self.vars = [self.log_ak]
         else:
             self.log_ak = tf.constant(np.log(ak_init), name="log_ak", dtype=tf.float32)
+            self.vars = []
 
         self.ak = tf.exp(self.log_ak)
         self.mean = tf.fill((self.n_nodes,), 0.0)
@@ -146,7 +149,7 @@ class MRFSpatialPrior(ParameterPrior):
         self.var = 1 / spatial_prec
         self.mean = self.var * spatial_prec * spatial_mean
 
-    def update(self, avb):
+    def avb_update(self, avb):
         """
         Update the global spatial precision when using analytic update mode
 
@@ -228,6 +231,7 @@ class ARDPrior(ParameterPrior):
 
         # Set up inferred precision parameter phi - infer the log so always positive
         self.log_phi = tf.Variable(default, name="log_phi", dtype=tf.float32)
+        self.vars = [self.log_phi]
 
     def _update_deps(self):
         self.phi = tf.clip_by_value(tf.exp(self.log_phi), 0, 1e6)
@@ -239,7 +243,7 @@ class ARDPrior(ParameterPrior):
         self.var = 1/self.phi
         self.mean = tf.fill((nn,), tf.constant(0.0, dtype=tf.float32))
 
-    def update(self, avb):
+    def avb_update(self, avb):
         """
         Update the ARD precision when using analytic update mode
 
@@ -280,6 +284,7 @@ class NoisePrior(LogBase):
         self.mean = self.c*self.s
         self.var = self.s*self.s*self.c
         self.prec = 1/self.var
+        self.vars = []
 
 class MVNPrior(LogBase):
     """
@@ -307,3 +312,4 @@ class MVNPrior(LogBase):
         self.var = tf.stack([p.var for p in param_priors], axis=1)
         self.cov = tf.linalg.diag(self.var)
         self.prec = tf.linalg.inv(self.cov)
+        self.vars = sum([p.vars for p in param_priors], [])

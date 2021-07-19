@@ -8,7 +8,27 @@ import tensorflow as tf
 
 from vaby.utils import LogBase
 
-class NoisePosterior(LogBase):
+class Posterior(LogBase):
+    """
+    Posterior distribution for a parameter
+    """
+
+    def build(self):
+        """
+        Define dependency tensors
+
+        Only tf.Variable tensors may be defined in the constructor. Dependent
+        variables must be created in this method to allow gradient recording
+        """
+        pass
+
+    def avb_update(self, avb):
+        """
+        Update variables from AVB state
+        """
+        pass
+
+class NoisePosterior(Posterior):
     """
     Posterior distribution for noise parameter
 
@@ -40,16 +60,16 @@ class NoisePosterior(LogBase):
 
         self.log_s = tf.Variable(tf.math.log(init_s), dtype=tf.float32, name="noise_s")
         self.log_c = tf.Variable(tf.math.log(init_c), dtype=tf.float32, name="noise_c")
-        self._set_props()
+        self.vars = [self.log_s, self.log_c]
 
-    def _set_props(self):
+    def build(self):
         self.s = tf.exp(self.log_s)
         self.c = tf.exp(self.log_c)
         self.mean = self.c*self.s # [V]
         self.var = self.s*self.s*self.c # [V]
         self.prec = 1/self.var # [V]
 
-    def update(self, avb):
+    def avb_update(self, avb):
         """
         Update noise parameters
 
@@ -71,9 +91,9 @@ class NoisePosterior(LogBase):
 
         self.log_s.assign(tf.math.log(s_new))
         self.log_c.assign(tf.math.log(c_new))
-        self._set_props()
+        self.build()
 
-class MVNPosterior(LogBase):
+class MVNPosterior(Posterior):
     """
     MVN Posterior distribution for model parameters
 
@@ -83,8 +103,6 @@ class MVNPosterior(LogBase):
     """
 
     def __init__(self, data_model, params, tpts, **kwargs):
-        """
-        """
         LogBase.__init__(self)
         self.num_nodes = data_model.n_nodes
         self.num_params = len(params)
@@ -127,35 +145,41 @@ class MVNPosterior(LogBase):
             init_cov = tf.linalg.diag(init_var)
 
         self.mean = tf.Variable(init_mean, dtype=tf.float32, name="post_mean")
+        self.vars = [self.mean,]
 
-        if kwargs.get("force_positive_var", False):
+        self.force_positive_var = kwargs.get("force_positive_var", False)
+        if self.force_positive_var:
             # If we want to optimize this using tensorflow we should build it up as in
             # SVB to ensure it is always positive definite. The analytic approach
             # guarantees this automatically (I think!)
             # FIXME Note that we are not initializing the off diag elements yet
             self.log_var = tf.Variable(tf.math.log(init_var), name="post_log_var")
+            self.vars.append(self.log_var)
+
+            init_cov_chol = tf.linalg.cholesky(init_cov)
+            self.off_diag_vars = tf.Variable(init_cov_chol, name="post_off_diag_cov")
+            self.vars.append(self.off_diag_vars)
+        else:
+            self.cov = tf.Variable(init_cov, dtype=tf.float32, name="post_cov")
+            self.vars.append(self.cov)
+
+    def build(self):
+        if self.force_positive_var:
             self.var = tf.math.exp(self.log_var)
             self.std = tf.math.sqrt(self.var)
             self.std_diag = tf.linalg.diag(self.std)
 
-            init_cov_chol = tf.linalg.cholesky(init_cov)
-            self.off_diag_vars = tf.Variable(init_cov_chol, name="post_off_diag_cov")
             self.off_diag_cov_chol = tf.linalg.set_diag(tf.linalg.band_part(self.off_diag_vars, -1, 0),
                                                         tf.zeros([self.num_nodes, self.num_params]))
             self.off_diag_cov_chol = self.off_diag_cov_chol
             self.cov_chol = tf.add(self.std_diag, self.off_diag_cov_chol)
             self.cov = tf.matmul(tf.transpose(self.cov_chol, perm=(0, 2, 1)), self.cov_chol)
-        else:
-            self.cov = tf.Variable(init_cov, dtype=tf.float32, name="post_cov")
 
-        self._set_props()
-
-    def _set_props(self):
         self.prec = tf.linalg.inv(self.cov)
 
-    def update(self, avb):
+    def avb_update(self, avb):
         """
-        Get updates for model MVN parameters
+        Get AVB updates for model MVN parameters
 
         From section 4.2 of the FMRIB Variational Bayes Tutorial I
 
@@ -172,18 +196,31 @@ class MVNPosterior(LogBase):
 
         self.mean.assign(mean_new)
         self.cov.assign(cov_new)
-        self._set_props()
+        # FIXME broken if force_positive_var set
+        self.build()
 
 class CombinedPosterior(LogBase):
     """
     Represents the parameter posterior and the noise posterior as a single
     distribution for input/output purposes
     """
-    def __init__(self, post, noise_post):
-        # FIXME in surface mode noise not on nodes and this will not work
-        self.mean = tf.concat([post.mean, tf.reshape(noise_post.mean, (-1, 1))], axis=1)
+    def __init__(self, model_post, noise_post):
+        self.model_post = model_post
+        self.noise_post = noise_post
+        self.vars = self.model_post.vars + self.noise_post.vars
 
-        cov_model_padded = tf.pad(post.cov, tf.constant([[0, 0], [0, 1], [0, 1]]))
-        cov_noise = tf.reshape(noise_post.var, (-1, 1, 1))
-        cov_noise_padded = tf.pad(cov_noise, tf.constant([[0, 0], [post.num_params, 0], [post.num_params, 0]]))
+    def build(self):
+        self.model_post.build()
+        self.noise_post.build()
+
+        # FIXME in surface mode noise not on nodes and this will not work
+        self.mean = tf.concat([self.model_post.mean, tf.reshape(self.noise_post.mean, (-1, 1))], axis=1)
+
+        cov_model_padded = tf.pad(self.model_post.cov, tf.constant([[0, 0], [0, 1], [0, 1]]))
+        cov_noise = tf.reshape(self.noise_post.var, (-1, 1, 1))
+        cov_noise_padded = tf.pad(cov_noise, tf.constant([[0, 0], [self.model_post.num_params, 0], [self.model_post.num_params, 0]]))
         self.cov = cov_model_padded + cov_noise_padded
+
+    def avb_update(self, avb):
+        self.model_post.avb_update(avb)
+        self.noise_post.avb_update(avb)
