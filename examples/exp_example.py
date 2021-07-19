@@ -57,5 +57,5 @@ handler.setFormatter(logging.Formatter('%(levelname)s : %(message)s'))
 logging.getLogger().addHandler(handler)
 
 # Run AVB inference
-avb = Avb(t, vaby.DataModel(DATA_NOISY), model, debug="--debug" in sys.argv, max_iterations=20)
-avb.run()
+avb = Avb(t, vaby.DataModel(DATA_NOISY), model)
+avb.run(method="leastsq", maxits=20, learning_rate=0.1, debug="--debug" in sys.argv)
