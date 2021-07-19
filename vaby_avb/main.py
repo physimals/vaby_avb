@@ -134,7 +134,7 @@ class AvbArgumentParser(argparse.ArgumentParser):
 
         # Support arguments of the form --param-<param name>-<param option>
         # (e.g. --param-ftiss-mean=4.4 --param-delttiss-prior-type M)
-        param_arg = re.compile("--param-(\w+)-([\w-]+)")
+        param_arg = re.compile(r"--param-(\w+)-([\w-]+)")
         options.param_overrides = {}
         consume_next_arg = None
         for arg in extras:
@@ -221,7 +221,7 @@ def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
     else:
         raise NotImplementedError("surface mode")
         #data_model = SurfaceModel(data, surfaces, mask, **kwargs)
-    
+
     # Create the generative model
     fwd_model = get_model_class(model_name)(data_model, **kwargs)
     fwd_model.log_config()
