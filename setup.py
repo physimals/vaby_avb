@@ -94,9 +94,7 @@ kwargs = {
         ],
     },
     'classifiers' : [
-        'Development Status :: 3 - Alpha',
         'Intended Audience :: Science/Research',
-        'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3',
         'Topic :: Scientific/Engineering :: Bio-Informatics',
         'License :: OSI Approved :: Apache Software License',
