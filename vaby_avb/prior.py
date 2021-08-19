@@ -1,5 +1,5 @@
 """
-AVB - Priors for model and noise parameters
+VABY_AVB - Priors for model and noise parameters
 """
 
 import numpy as np
@@ -43,6 +43,9 @@ class ParameterPrior(LogBase):
         :return: Free energy contribution associated with this prior, if required. [W] or constant
         """
         return 0
+
+    def build(self):
+        pass
 
     def avb_update(self, avb):
         """
@@ -127,11 +130,10 @@ class MRFSpatialPrior(ParameterPrior):
             self.log_ak = tf.constant(np.log(ak_init), name="log_ak", dtype=tf.float32)
             self.vars = []
 
-        self.ak = tf.exp(self.log_ak)
         self.mean = tf.fill((self.n_nodes,), 0.0)
         self.var = tf.fill((self.n_nodes,), 1/self.ak)
 
-    def _update_deps(self, avb):
+    def build(self):
         self.ak = tf.exp(self.log_ak)
 
         # For the spatial mean we essentially need the (weighted) average of 
@@ -213,7 +215,7 @@ class MRFSpatialPrior(ParameterPrior):
 
         #self.log.info("MRFSpatialPrior::Calculate aK %i: New aK: %e", self.idx, ak)
         self.log_ak.assign(tf.math.log(aK))
-        self._update_deps(avb)
+        self.build()
 
 class ARDPrior(ParameterPrior):
     """
@@ -226,22 +228,20 @@ class ARDPrior(ParameterPrior):
         LogBase.__init__(self)
         self.fixed_var = init_variance
         self.idx = idx
-        nn = data_model.n_nodes
-        default = np.full((nn, ), np.log(1e-12))
+        self.mean = tf.fill((data_model.n_nodes,), tf.constant(0.0, dtype=tf.float32))
 
         # Set up inferred precision parameter phi - infer the log so always positive
-        self.log_phi = tf.Variable(default, name="log_phi", dtype=tf.float32)
+        default_phi = np.full((data_model.n_nodes, ), np.log(1e-12))
+        self.log_phi = tf.Variable(default_phi, name="log_phi", dtype=tf.float32)
         self.vars = [self.log_phi]
 
-    def _update_deps(self):
+    def build(self):
         self.phi = tf.clip_by_value(tf.exp(self.log_phi), 0, 1e6)
 
         # FIXME hack to make phi get printed after each iteration using code written for
         # the MRF spatial prior
         self.ak = tf.reduce_mean(self.phi)
-
         self.var = 1/self.phi
-        self.mean = tf.fill((nn,), tf.constant(0.0, dtype=tf.float32))
 
     def avb_update(self, avb):
         """
@@ -256,7 +256,7 @@ class ARDPrior(ParameterPrior):
         var = avb.post.cov[:, self.idx, self.idx]
         new_var = tf.square(mean) + var
         self.log_phi.assign(tf.math.log(1/new_var))
-        self._update_deps()
+        self.build()
 
     def free_energy(self):
         # See appendix D of Fabber paper
@@ -301,15 +301,19 @@ class MVNPrior(LogBase):
     :attr cov: Prior covariance matrix (always diagonal) [W, P, P] or [1, P, P]
     :attr prec: Prior precision matrix (always diagonal) [W, P, P] or [1, P, P]
     """
-    def __init__(self, param_priors, noise_prior):
+    def __init__(self, param_priors):
         """
         :param param_priors: Sequence of parameter priors
         :param noise_prior: Noise prior 
         """
         LogBase.__init__(self)
+        self.param_priors = param_priors
 
-        self.mean = tf.stack([p.mean for p in param_priors], axis=1)
-        self.var = tf.stack([p.var for p in param_priors], axis=1)
+    def build(self):
+        for prior in self.param_priors:
+            prior.build()
+        self.mean = tf.stack([p.mean for p in self.param_priors], axis=1)
+        self.var = tf.stack([p.var for p in self.param_priors], axis=1)
         self.cov = tf.linalg.diag(self.var)
         self.prec = tf.linalg.inv(self.cov)
-        self.vars = sum([p.vars for p in param_priors], [])
+        self.vars = sum([p.vars for p in self.param_priors], [])

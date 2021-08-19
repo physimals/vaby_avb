@@ -1,5 +1,5 @@
 """
-Implementation of analytic Variational Bayes to infer a 
+VABY_AVB - Implementation of analytic Variational Bayes to infer a 
 nonlinear forward model
 
 This implements section 4 of the FMRIB Variational Bayes tutorial 1.
@@ -9,10 +9,6 @@ differences are expected as the forward model is not identical.
 import math
 
 import numpy as np
-import scipy.special
-#import tensorflow.compat.v1 as tf
-#from tensorflow.python.ops.parallel_for.gradients import jacobian
-#tf.disable_v2_behavior()
 import tensorflow as tf
 
 from vaby.utils import LogBase
@@ -34,7 +30,7 @@ class Avb(LogBase):
         self.data_model = data_model
         self.model = fwd_model
 
-        self.data = self.data_model.data_flattened
+        self.data = self.data_model.data_flat
         self.nv, self.nt = tuple(self.data.shape)
         self.nn = self.data_model.n_nodes
         self.nparam = len(self.model.params)
@@ -227,8 +223,8 @@ class Avb(LogBase):
         #
         # FIXME we have some parts defined nodewise and some voxelwise. Need to keep them
         # separate until we sum the contributions when optimizing the total free energy
-        self.Fparts_vox = self.log_tf(tf.stack(Fparts_vox, axis=-1), shape=True, force=False, name="F_vox")
-        self.Fparts_node = self.log_tf(tf.stack(Fparts_node, axis=-1), shape=True, force=False)
+        self.Fparts_vox = tf.stack(Fparts_vox, axis=-1)
+        self.Fparts_node = tf.stack(Fparts_node, axis=-1)
         F_vox = tf.reduce_sum(self.Fparts_vox, axis=-1)
         F_node = tf.reduce_sum(self.Fparts_node, axis=-1)
         for prior in self.param_priors:
@@ -247,7 +243,7 @@ class Avb(LogBase):
             get_prior(idx, p, self.data_model, self.post, **kwargs) 
             for idx, p in enumerate(self.model.params)
         ]
-        self.prior = MVNPrior(self.param_priors, self.noise_prior)
+        self.prior = MVNPrior(self.param_priors)
 
         # Combined parameter/noise posterior for output only
         self.all_post = CombinedPosterior(self.post, self.noise_post)
@@ -282,6 +278,7 @@ class Avb(LogBase):
         self.JtJ = tf.linalg.matmul(self.Jt, self.J) # [W, P, P]
 
     def cost_free_energy(self):
+        self.prior.build()
         self.all_post.build()
         self.linearise()
         self.evaluate()
@@ -290,6 +287,7 @@ class Avb(LogBase):
         return self.cost_fe
 
     def cost_leastsq(self):
+        self.prior.build()
         self.all_post.build()
         self.linearise()
         self.evaluate()
@@ -326,10 +324,11 @@ class Avb(LogBase):
     def run_analytic(self, max_iterations=10, record_history=False, progress_cb=None, **kwargs):
         self.log.info("Doing analytic VB")
         # Use analytic update equations to update model and noise parameters iteratively
+        self.prior.build()
         self.all_post.build()
         self.linearise()
         self.evaluate()
-        self.cost_free_energy()
+        self.free_energy()
         self.log_iter(0, record_history)
         for idx in range(max_iterations):
             # Update model parameters

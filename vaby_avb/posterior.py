@@ -1,5 +1,5 @@
 """
-AVB - Posterior distribution
+VABY_AVB - Posterior distribution
 """
 import math
 
@@ -11,14 +11,31 @@ from vaby.utils import LogBase
 class Posterior(LogBase):
     """
     Posterior distribution for a parameter
+
+    Attributes:
+     - ``size`` Number of variates for a multivariate distribution
+     - ``mean`` [W, size] Mean value(s) at each node
+     - ``var`` [W, size] Variance(s) at each node
+     - ``cov`` [W, size, size] Covariance matrix at each node
+     - ``variables`` Sequence of tf.Variable objects containing posterior state
+
+    ``size`` and ``variables`` must be initialized in the constructor. Other
+    attributes must be initialized either in the constructor (if they are constant
+    tensors or tf.Variable) or in ``build`` (if they are dependent tensors). The
+    constructor should call ``build`` after initializing constant and tf.Variable
+    tensors.
     """
+    def __init__(self, idx, **kwargs):
+        LogBase.__init__(self, **kwargs)
+        self._idx = idx
 
     def build(self):
         """
-        Define dependency tensors
-
-        Only tf.Variable tensors may be defined in the constructor. Dependent
-        variables must be created in this method to allow gradient recording
+        Define tensors that depend on Variables in the posterior
+        
+        Only constant tensors and tf.Variables should be defined in the constructor.
+        Any dependent variables must be created in this method to allow gradient 
+        recording
         """
         pass
 
@@ -28,9 +45,45 @@ class Posterior(LogBase):
         """
         pass
 
+    def sample(self, nsamples):
+        """
+        :param nsamples: Number of samples to return per parameter vertex / parameter
+
+        :return: A tensor of shape [W, P, S] where W is the number
+                 of parameter nodes, P is the number of parameters in the distribution
+                 (possibly 1) and S is the number of samples
+        """
+        raise NotImplementedError()
+
+    def entropy(self, samples=None):
+        """
+        :param samples: A tensor of shape [W, P, S] where W is the number
+                        of parameter nodes, P is the number of parameters in the prior
+                        (possibly 1) and S is the number of samples.
+                        This parameter may or may not be used in the calculation.
+                        If it is required, the implementation class must check
+                        that it is provided
+
+        :return Tensor of shape [W] containing vertexwise distribution entropy
+        """
+        raise NotImplementedError()
+
+    def log_det_cov(self):
+        """
+        :return: Log of the determinant of the covariance matrix
+        """
+        raise NotImplementedError()
+
+    @property
+    def is_gaussian(self):
+        return isinstance(self, NormalPosterior)
+
 class NoisePosterior(Posterior):
     """
-    Posterior distribution for noise parameter
+    Gamma posterior for noise parameter.
+
+    Currently only used in AVB - methods required to support SVB not
+    yet implemented.
 
     :attr s: Noise gamma distribution prior scale parameter [V]
     :attr c: Noise gamma distribution prior shape parameter [V]
@@ -38,7 +91,7 @@ class NoisePosterior(Posterior):
 
     def __init__(self, data_model, **kwargs):
         LogBase.__init__(self)
-        nv = data_model.n_unmasked_voxels
+        nv = data_model.n_voxels
 
         if kwargs.get("init", None) is not None:
             # Initial posterior provided
@@ -124,7 +177,7 @@ class MVNPosterior(Posterior):
             for idx, p in enumerate(params):
                 mean, var = None, None
                 if p.post_init is not None: # FIXME won't work if nodes != voxels
-                    mean, var = p.post_init(idx, tpts, data_model.data_flattened)
+                    mean, var = p.post_init(idx, tpts, data_model.data_flat)
                     if mean is not None:
                         mean = p.post_dist.transform.int_values(mean, ns=tf.math)
                     if var is not None:
@@ -140,6 +193,7 @@ class MVNPosterior(Posterior):
                 init_var.append(tf.cast(var, tf.float32))
 
             # Make shape [W, P]
+            print(init_mean)
             init_mean = tf.stack(init_mean, axis=-1)
             init_var = tf.stack(init_var, axis=-1)
             init_cov = tf.linalg.diag(init_var)
