@@ -1,3 +1,6 @@
+"""
+VABY_AVB
+"""
 try:
     from ._version import __version__, __timestamp__
 except ImportError:

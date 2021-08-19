@@ -1,5 +1,5 @@
 """
-Implementation of command line tool for AVB
+VABY_AVB - Implementation of command line tool for AVB
 
 Examples::
 
@@ -217,7 +217,7 @@ def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
     # Initialize the data model which contains data dimensions, number of time
     # points, list of unmasked voxels, etc
     if surfaces is None: 
-        data_model = DataModel(data, mask, **kwargs)
+        data_model = DataModel(data, mask=mask, **kwargs)
     else:
         raise NotImplementedError("surface mode")
         #data_model = SurfaceModel(data, surfaces, mask, **kwargs)
@@ -284,7 +284,7 @@ def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
 
     # Write out input data
     if kwargs.get("save_input_data", False):
-        data_model.nifti_image(data_model.data_flattened).to_filename(os.path.join(output, "input_data.nii.gz"))
+        data_model.nifti_image(data_model.data_flat).to_filename(os.path.join(output, "input_data.nii.gz"))
 
     log.info("Output written to: %s", output)
     return runtime, avb
