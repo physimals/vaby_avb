@@ -185,8 +185,8 @@ def main():
         welcome = "Welcome to AVB %s" % __version__
         print(welcome)
         print("=" * len(welcome))
-        runtime, _ = run(log_stream=sys.stdout, **vars(options))
-        print("FINISHED - runtime %.3fs" % runtime)
+        rt, _ = run(log_stream=sys.stdout, **vars(options))
+        print("FINISHED - runtime %.3fs" % rt)
     except (RuntimeError, ValueError) as exc:
         sys.stderr.write("ERROR: %s\n" % str(exc))
         import traceback
@@ -228,8 +228,8 @@ def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
 
     history = kwargs.get("save_free_energy_history", False) or kwargs.get("save_param_history", False)
     avb = Avb(tpts, data_model, fwd_model, **kwargs)
-    runtime, _ret = runtime(avb.run, record_history=history, **kwargs)
-    log.info("DONE: %.3fs", runtime)
+    rt, _ret = runtime(avb.run, record_history=history, **kwargs)
+    log.info("DONE: %.3fs", rt)
 
     _makedirs(output, exist_ok=True)
     params = [p.name for p in fwd_model.params]
