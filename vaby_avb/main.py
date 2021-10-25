@@ -16,13 +16,10 @@ import re
 import nibabel as nib
 import numpy as np
 
-from vaby.utils import ValueList
+from vaby.utils import ValueList, setup_logging, runtime
 from vaby import DataModel, get_model_class
 
 from . import __version__, Avb
-from vaby.utils import ValueList
-from vaby import get_model_class
-from vaby.data import DataModel
 
 USAGE = "avb <options>"
 
@@ -231,7 +228,7 @@ def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
 
     history = kwargs.get("save_free_energy_history", False) or kwargs.get("save_param_history", False)
     avb = Avb(tpts, data_model, fwd_model, **kwargs)
-    runtime, _ret = _runtime(avb.run, record_history=history, **kwargs)
+    runtime, _ret = runtime(avb.run, record_history=history, **kwargs)
     log.info("DONE: %.3fs", runtime)
 
     _makedirs(output, exist_ok=True)
@@ -288,50 +285,6 @@ def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
 
     log.info("Output written to: %s", output)
     return runtime, avb
-
-def setup_logging(outdir=".", **kwargs):
-    """
-    Set the log level, formatters and output streams for the logging output
-
-    By default this goes to <outdir>/logfile at level INFO
-    """
-    # First we clear all loggers from previous runs
-    for logger_name in list(logging.Logger.manager.loggerDict.keys()) + ['']:
-        logger = logging.getLogger(logger_name)
-        logger.handlers = []
-
-    if kwargs.get("log_config", None):
-        # User can supply a logging config file which overrides everything else
-        logging.config.fileConfig(kwargs["log_config"])
-    else:
-        # Set log level on the root logger to allow for the possibility of 
-        # debug logging on individual loggers
-        level = kwargs.get("log_level", "info")
-        if not level:
-            level = "info"
-        level = getattr(logging, level.upper(), logging.INFO)
-        logging.getLogger().setLevel(level)
-
-        if kwargs.get("save_log", False):
-            # Send the log to an output logfile
-            logfile = os.path.join(outdir, "logfile")
-            logging.basicConfig(filename=logfile, filemode="w", level=level)
-
-        if kwargs.get("log_stream", None) is not None:
-            # Can also supply a stream to send log output to as well (e.g. sys.stdout)
-            extra_handler = logging.StreamHandler(kwargs["log_stream"])
-            extra_handler.setFormatter(logging.Formatter('%(levelname)s : %(message)s'))
-            logging.getLogger().addHandler(extra_handler)
-
-def _runtime(runnable, *args, **kwargs):
-    """
-    Record how long it took to run something
-    """
-    import time
-    start_time = time.time()
-    ret = runnable(*args, **kwargs)
-    end_time = time.time()
-    return (end_time - start_time), ret
 
 def _makedirs(data_vol, exist_ok=False):
     """
