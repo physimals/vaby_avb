@@ -324,11 +324,7 @@ class Avb(LogBase):
     def run_analytic(self, max_iterations=10, record_history=False, progress_cb=None, **kwargs):
         self.log.info("Doing analytic VB")
         # Use analytic update equations to update model and noise parameters iteratively
-        self.prior.build()
-        self.all_post.build()
-        self.linearise()
-        self.evaluate()
-        self.free_energy()
+        self.cost_free_energy()
         self.log_iter(0, record_history)
         for idx in range(max_iterations):
             # Update model parameters
@@ -345,8 +341,6 @@ class Avb(LogBase):
             for prior in self.param_priors:
                 prior.avb_update(self)
 
-            self.linearise()
-            self.evaluate()
             self.cost_free_energy()
             self.log_iter(idx+1, record_history)
             if progress_cb is not None:

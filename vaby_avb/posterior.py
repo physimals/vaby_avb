@@ -144,7 +144,6 @@ class NoisePosterior(Posterior):
 
         self.log_s.assign(tf.math.log(s_new))
         self.log_c.assign(tf.math.log(c_new))
-        self.build()
 
 class MVNPosterior(Posterior):
     """
@@ -250,8 +249,6 @@ class MVNPosterior(Posterior):
 
         self.mean.assign(mean_new)
         self.cov.assign(cov_new)
-        # FIXME broken if force_positive_var set
-        self.build()
 
 class CombinedPosterior(LogBase):
     """
