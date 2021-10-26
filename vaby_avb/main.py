@@ -277,14 +277,14 @@ def run(data, model_name, output, mask=None, surfaces=None, **kwargs):
     # Write out runtime
     if kwargs.get("save_runtime", False):
         with open(os.path.join(output, "runtime"), "w") as runtime_f:
-            runtime_f.write("%f\n" % runtime)
+            runtime_f.write("%f\n" % rt)
 
     # Write out input data
     if kwargs.get("save_input_data", False):
         data_model.nifti_image(data_model.data_flat).to_filename(os.path.join(output, "input_data.nii.gz"))
 
     log.info("Output written to: %s", output)
-    return runtime, avb
+    return rt, avb
 
 def _makedirs(data_vol, exist_ok=False):
     """
