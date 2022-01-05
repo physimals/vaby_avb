@@ -91,7 +91,7 @@ class NoisePosterior(Posterior):
 
     def __init__(self, data_model, **kwargs):
         LogBase.__init__(self)
-        nv = data_model.n_voxels
+        nv = data_model.data_space.size
 
         if kwargs.get("init", None) is not None:
             # Initial posterior provided
@@ -130,7 +130,7 @@ class NoisePosterior(Posterior):
 
         :return: Sequence of tuples: (variable, new value)
         """
-        c_new = tf.fill((avb.nv,), (tf.cast(avb.nt, tf.float32) - 1)/2 + avb.noise_prior.c)
+        c_new = tf.fill((avb.n_voxels,), (tf.cast(avb.n_tpts, tf.float32) - 1)/2 + avb.noise_prior.c)
         # FIXME need k (residuals) in voxel-space
         dmu = avb.orig_mean - avb.post.mean
         dk = tf.einsum("ijk,ik->ij", avb.J, dmu)
@@ -156,7 +156,7 @@ class MVNPosterior(Posterior):
 
     def __init__(self, data_model, params, tpts, **kwargs):
         LogBase.__init__(self)
-        self.num_nodes = data_model.n_nodes
+        self.num_nodes = data_model.model_space.size
         self.num_params = len(params)
 
         if kwargs.get("init", None) is not None:
@@ -176,7 +176,7 @@ class MVNPosterior(Posterior):
             for idx, p in enumerate(params):
                 mean, var = None, None
                 if p.post_init is not None: # FIXME won't work if nodes != voxels
-                    mean, var = p.post_init(idx, tpts, data_model.data_flat)
+                    mean, var = p.post_init(idx, tpts, data_model.data_space.srcdata.flat)
                     if mean is not None:
                         mean = p.post_dist.transform.int_values(mean, ns=tf.math)
                     if var is not None:
@@ -192,7 +192,6 @@ class MVNPosterior(Posterior):
                 init_var.append(tf.cast(var, tf.float32))
 
             # Make shape [W, P]
-            print(init_mean)
             init_mean = tf.stack(init_mean, axis=-1)
             init_var = tf.stack(init_var, axis=-1)
             init_cov = tf.linalg.diag(init_var)

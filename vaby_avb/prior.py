@@ -73,7 +73,7 @@ class NormalPrior(ParameterPrior):
 
         # Mean/variance is usually specified globally so
         # make sure it has a nodewise dimension
-        nn = data_model.n_nodes
+        nn = data_model.model_space.size
         while np.array(mean).ndim < 1:
             mean = np.full((nn,), mean)
         while np.array(variance).ndim < 1:
@@ -93,33 +93,33 @@ class MRFSpatialPrior(ParameterPrior):
         """
         LogBase.__init__(self)
         self.idx = idx
-        self.n_nodes = data_model.n_nodes
+        self.n_nodes = data_model.model_space.size
 
         # Laplacian matrix with diagonal zeroed
         indices=np.array([
-                data_model.laplacian.row, 
-                data_model.laplacian.col
+                data_model.model_space.laplacian.row, 
+                data_model.model_space.laplacian.col
         ]).T
         self.laplacian = tf.SparseTensor(
             indices=indices,
-            values=data_model.laplacian.data, 
-            dense_shape=[data_model.n_nodes, data_model.n_nodes]
+            values=data_model.model_space.laplacian.data, 
+            dense_shape=[self.n_nodes, self.n_nodes]
         ) # [W, W] sparse
 
         # Laplacian matrix with diagonal zeroed
         offdiag_mask = data_model.laplacian.row != data_model.laplacian.col
         indices=np.array([
-                data_model.laplacian.row[offdiag_mask], 
-                data_model.laplacian.col[offdiag_mask]
+                data_model.model_space.laplacian.row[offdiag_mask], 
+                data_model.model_space.laplacian.col[offdiag_mask]
         ]).T
         self.laplacian_nodiag = tf.SparseTensor(
             indices=indices,
-            values=data_model.laplacian.data[offdiag_mask], 
-            dense_shape=[data_model.n_nodes, data_model.n_nodes]
+            values=data_model.model_space.laplacian.data[offdiag_mask], 
+            dense_shape=[self.n_nodes, self.n_nodes]
         ) # [W, W] sparse
 
         # Diagonal of Laplacian matrix [W]
-        self.laplacian_diagonal = tf.constant(-data_model.laplacian.diagonal(), dtype=tf.float32)
+        self.laplacian_diagonal = tf.constant(-data_model.model_space.laplacian.diagonal(), dtype=tf.float32)
 
         # Set up spatial smoothing parameter - infer the log so always positive
         ak_init = kwargs.get("ak", 1e-5)
@@ -228,10 +228,10 @@ class ARDPrior(ParameterPrior):
         LogBase.__init__(self)
         self.fixed_var = init_variance
         self.idx = idx
-        self.mean = tf.fill((data_model.n_nodes,), tf.constant(0.0, dtype=tf.float32))
+        self.mean = tf.fill((data_model.model_space.size,), tf.constant(0.0, dtype=tf.float32))
 
         # Set up inferred precision parameter phi - infer the log so always positive
-        default_phi = np.full((data_model.n_nodes, ), np.log(1e-12))
+        default_phi = np.full((data_model.model_space.size, ), np.log(1e-12))
         self.log_phi = tf.Variable(default_phi, name="log_phi", dtype=tf.float32)
         self.vars = [self.log_phi]
 

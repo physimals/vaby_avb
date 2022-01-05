@@ -11,31 +11,51 @@ import math
 import numpy as np
 import tensorflow as tf
 
-from vaby.utils import LogBase
+from vaby.utils import InferenceMethod
 
 from .prior import MVNPrior, NoisePrior, get_prior
 from .posterior import MVNPosterior, NoisePosterior, CombinedPosterior
 
-class Avb(LogBase):
+class Avb(InferenceMethod):
+    """
+    Analytic Bayesian model fitting
 
-    def __init__(self, tpts, data_model, fwd_model, **kwargs):
+    This class implements VB inference methods based on the analytic expression
+    for the free energy
+    """
+
+    def __init__(self, data_model, fwd_model, **kwargs):
+        InferenceMethod.__init__(self, data_model, fwd_model, **kwargs)
+
+    def run(self, **kwargs):
         """
-        :param data: Data timeseries [(W), B]
-        :param model: Forward model
+        Run analytic VB fitting
         """
-        LogBase.__init__(self)
-        while tpts.ndim < 2:
-            tpts = tpts[np.newaxis, ...]
-        self.tpts = np.array(tpts, dtype=np.float32)
-        self.data_model = data_model
-        self.model = fwd_model
+        self.log.info("Starting VB inference")
+        record_history = kwargs.get("save_free_energy_history", False) or kwargs.get("save_param_history", False)
 
-        self.data = self.data_model.data_flat
-        self.nv, self.nt = tuple(self.data.shape)
-        self.nn = self.data_model.n_nodes
-        self.nparam = len(self.model.params)
+        self.history = {}
+        self._create_prior_post(**kwargs)
 
-    def debug_output(self, text):
+        method = kwargs.pop("method", "analytic")
+        if method == "leastsq":
+            self._run_leastsq(**kwargs)
+        elif method == "maxf":
+            self._run_maxf(**kwargs)
+        elif method == "analytic":
+            self._run_analytic(**kwargs)
+        else:
+            raise ValueError("Unknown optimization method: %s" % method)
+
+        if record_history:
+            for item, item_history in self.history.items():
+                # Reshape history items so history is in last axis not first
+                trans_axes = list(range(1, item_history[0].ndim+1)) + [0,]
+                self.history[item] = np.array(item_history).transpose(trans_axes)
+
+        self.finalize()
+
+    def _debug_output(self, text):
         self.log.debug(text)
         self.log.debug("Prior mean: %s\n", self.prior.mean)
         self.log.debug("Prior prec: %s\n", self.prior.prec)
@@ -47,7 +67,7 @@ class Avb(LogBase):
         self.log.debug("Noise post prec: %s\n", self.noise_post.prec)
         self.log.debug("Jacobian:\n%s\n", self.J)
 
-    def jacobian(self):
+    def _jacobian(self):
         """
         Numerical differentiation to calculate Jacobian matrix
         of partial derivatives of model prediction with respect to
@@ -66,16 +86,16 @@ class Avb(LogBase):
         #print("Params\n", params)
         #print(plus, minus)
         #print(delta)
-        for param_idx in range(self.nparam):
-            pick_param = tf.equal(tf.range(self.nparam), param_idx) # [P]
+        for param_idx in range(self.n_params):
+            pick_param = tf.equal(tf.range(self.n_params), param_idx) # [P]
             pick_param = tf.expand_dims(tf.expand_dims(pick_param, -1), -1) # [P, 1, 1]
             plus_param = tf.where(pick_param, plus, params) # [P, W, 1]
             minus_param = tf.where(pick_param, minus, params) # [P, W, 1]
-            plus_model = self.inference_to_model(plus_param)
-            minus_model = self.inference_to_model(minus_param)
+            plus_model = self._inference_to_model(plus_param)
+            minus_model = self._inference_to_model(minus_param)
             #print(param_idx, plus_model.numpy(), minus_model.numpy())
             # diff [W, B]
-            diff = self.model.evaluate(plus_model, self.tpts) - self.model.evaluate(minus_model, self.tpts)
+            diff = self.fwd_model.evaluate(plus_model, self.tpts) - self.fwd_model.evaluate(minus_model, self.tpts)
             #print("Delta\n", delta[param_idx])
             #print("Diff\n", diff)
             J.append(diff / (2*delta[param_idx]))
@@ -86,7 +106,7 @@ class Avb(LogBase):
         return J
 
     @tf.function
-    def jacobian_autodiff(self):
+    def _jacobian_autodiff(self):
         """
         Experimental jacobian using Tensorflow. Doesn't batch over voxels currently
         that might need TF2
@@ -96,14 +116,14 @@ class Avb(LogBase):
         """
         with tf.GradientTape() as tape:
             mean_trans = tf.transpose(self.post.mean, (1, 0)) # [P, W]
-            params_model = self.inference_to_model(tf.expand_dims(mean_trans, axis=-1))
-            modelfit = self.model.evaluate(params_model, self.tpts)
+            params_model = self._inference_to_model(tf.expand_dims(mean_trans, axis=-1))
+            modelfit = self.fwd_model.evaluate(params_model, self.tpts)
 
         J = tape.batch_jacobian(modelfit, self.post.mean)
         #print(J)
         return J
 
-    def inference_to_model(self, inference_params, idx=None):
+    def _inference_to_model(self, inference_params, idx=None):
         """
         Transform inference engine parameters into model parameters
 
@@ -111,13 +131,13 @@ class Avb(LogBase):
         """
         if idx is None:
             model_params = []
-            for idx in range(len(self.model.params)):
-                model_params.append(self.model.params[idx].post_dist.transform.ext_values(inference_params[idx, :], ns=tf))
+            for idx in range(len(self.fwd_model.params)):
+                model_params.append(self.fwd_model.params[idx].post_dist.transform.ext_values(inference_params[idx, :], ns=tf))
             return tf.stack(model_params)
         else:
-            return self.model.params[idx].post_dist.transform.ext_values(inference_params, ns=tf)
+            return self.fwd_model.params[idx].post_dist.transform.ext_values(inference_params, ns=tf)
 
-    def model_to_inference(self, model_params, idx=None):
+    def _model_to_inference(self, model_params, idx=None):
         """
         Transform inference engine parameters into model parameters
 
@@ -125,27 +145,27 @@ class Avb(LogBase):
         """
         if idx is None:
             inference_params = []
-            for idx in range(len(self.model.params)):
-                inference_params.append(self.model.params[idx].post_dist.transform.int_values(model_params[idx, :], ns=np))
+            for idx in range(len(self.fwd_model.params)):
+                inference_params.append(self.fwd_model.params[idx].post_dist.transform.int_values(model_params[idx, :], ns=np))
             return tf.stack(inference_params)
         else:
-            return self.model.params[idx].post_dist.transform.int_values(model_params, ns=tf)
+            return self.fwd_model.params[idx].post_dist.transform.int_values(model_params, ns=tf)
 
-    def free_energy(self):
+    def _free_energy(self):
         # Calculate individual parts of the free energy
         # For clarity define the following:
         c = self.noise_post.c
         c0 = self.noise_prior.c
         s = self.noise_post.s
         s0 = self.noise_prior.s
-        N = tf.cast(self.nt, tf.float32)
-        NP = tf.cast(self.nparam, tf.float32)
+        N = tf.cast(self.n_tpts, tf.float32)
+        NP = tf.cast(self.n_params, tf.float32)
         #P = self.post.prec
         P0 = self.prior.prec
         C = self.post.cov
         m = self.post.mean
         m0 = self.prior.mean
-        to_voxels = self.data_model.nodes_to_voxels
+        to_voxels = self.data_model.model_to_data
 
         Fparts_vox = []
         Fparts_node = []
@@ -193,12 +213,12 @@ class Avb(LogBase):
             -0.5 * tf.reshape(
               tf.linalg.matmul(
                 tf.linalg.matmul(
-                    tf.reshape(m - m0, (self.nn, 1, self.nparam)), 
+                    tf.reshape(m - m0, (self.n_nodes, 1, self.n_params)), 
                     P0
                 ),
-                tf.reshape(m - m0, (self.nn, self.nparam, 1))
+                tf.reshape(m - m0, (self.n_nodes, self.n_params, 1))
               ), 
-              (self.nn,)
+              (self.n_nodes,)
             )
         ) # [W]
 
@@ -232,16 +252,16 @@ class Avb(LogBase):
 
         return F_vox, F_node
 
-    def create_prior_post(self, **kwargs):
+    def _create_prior_post(self, **kwargs):
         # Set up prior and posterior
         self.tpts = tf.constant(self.tpts, dtype=tf.float32) # FIXME
         self.noise_post = NoisePosterior(self.data_model, force_positive=kwargs.get("use_adam", False), init=self.data_model.post_init)
-        self.post = MVNPosterior(self.data_model, self.model.params, self.tpts, init=self.data_model.post_init, **kwargs)
+        self.post = MVNPosterior(self.data_model, self.fwd_model.params, self.tpts, init=self.data_model.post_init, **kwargs)
 
         self.noise_prior = NoisePrior(s=kwargs.get("noise_s0", 1e6), c=kwargs.get("noise_c0", 1e-6))
         self.param_priors = [
             get_prior(idx, p, self.data_model, self.post, **kwargs) 
-            for idx, p in enumerate(self.model.params)
+            for idx, p in enumerate(self.fwd_model.params)
         ]
         self.prior = MVNPrior(self.param_priors)
 
@@ -249,7 +269,7 @@ class Avb(LogBase):
         self.all_post = CombinedPosterior(self.post, self.noise_post)
 
         # Report summary of parameters
-        for idx, param in enumerate(self.model.params):
+        for idx, param in enumerate(self.fwd_model.params):
             self.log.info(" - %s", param)
             self.log.info("   - Prior: %s %s", param.prior_dist, self.param_priors[idx])
             self.log.info("   - Posterior: %s", param.post_dist)
@@ -261,117 +281,92 @@ class Avb(LogBase):
                 setattr(self, "ak%i" % idx, p.ak)
                 idx += 1
 
-    def evaluate(self):
+    def _evaluate(self):
         mean_trans = tf.transpose(self.post.mean, (1, 0)) # [P, W]
-        self.model_mean = self.inference_to_model(mean_trans) # [P, W]
-        self.model_var = tf.stack([self.post.cov[:, v, v] for v in range(len(self.model.params))]) # [P, W] FIXME transform
+        self.model_mean = self._inference_to_model(mean_trans) # [P, W]
+        self.model_var = tf.stack([self.post.cov[:, v, v] for v in range(len(self.fwd_model.params))]) # [P, W] FIXME transform
         self.noise_mean, self.noise_prec = self.noise_post.mean, self.noise_post.prec # [V], [V]
         self.noise_var = 1.0/self.noise_prec # [V]
-        modelfit_nodes = self.model.evaluate(tf.expand_dims(self.model_mean, axis=-1), self.tpts) # [W, B]
-        self.modelfit = tf.squeeze(self.data_model.nodes_to_voxels_ts(tf.expand_dims(modelfit_nodes, 1)), 1) # [V, B]
+        modelfit_nodes = self.fwd_model.evaluate(tf.expand_dims(self.model_mean, axis=-1), self.tpts) # [W, B]
+        self.modelfit = tf.squeeze(self.data_model.model_to_data(tf.expand_dims(modelfit_nodes, 1)), 1) # [V, B]
         self.k = self.data - self.modelfit # [V, B, P]
 
-    def linearise(self):
-        self.J = self.jacobian() # [W, B, P]
-        #self.J = self.jacobian_autodiff() # [W, B, P]
+    def _linearise(self):
+        self.J = self._jacobian() # [W, B, P]
+        #self.J = self._jacobian_autodiff() # [W, B, P]
         self.Jt = tf.transpose(self.J, (0, 2, 1)) # [W, P, B]
         self.JtJ = tf.linalg.matmul(self.Jt, self.J) # [W, P, P]
 
-    def cost_free_energy(self):
+    def _cost_free_energy(self):
         self.prior.build()
         self.all_post.build()
-        self.linearise()
-        self.evaluate()
-        self.free_energy_vox, self.free_energy_node = self.free_energy()
+        self._linearise()
+        self._evaluate()
+        self.free_energy_vox, self.free_energy_node = self._free_energy()
         self.cost_fe = -tf.reduce_mean(self.free_energy_vox) - tf.reduce_mean(self.free_energy_node)
         return self.cost_fe
 
-    def cost_leastsq(self):
+    def _cost_leastsq(self):
         self.prior.build()
         self.all_post.build()
-        self.linearise()
-        self.evaluate()
+        self._linearise()
+        self._evaluate()
         self.cost_free_energy()
         self.cost_lsq = tf.reduce_sum(tf.square(self.k), axis=-1)
         return self.cost_lsq
 
-    def run_leastsq(self, max_iterations=10, record_history=False, **kwargs):
+    def _run_leastsq(self, max_iterations=10, record_history=False, **kwargs):
         self.log.info("Doing least squares optimization")
         optimizer = tf.keras.optimizers.Adam(learning_rate=kwargs.get("learning_rate", 0.05))
         for idx in range(max_iterations):
             with tf.GradientTape(persistent=False) as t:
                 # Loss function
-                self.cost = self.cost_leastsq()
+                self.cost = self._cost_leastsq()
             gradients = t.gradient(self.cost, self.all_post.vars)
 
             # Apply the gradient
             optimizer.apply_gradients(zip(gradients, self.all_post.vars))
-            self.log_iter(idx+1, record_history)
+            self._log_iter(idx+1, record_history)
 
-    def run_maxf(self, max_iterations=10, record_history=False, **kwargs):
+    def _run_maxf(self, max_iterations=10, record_history=False, **kwargs):
         self.log.info("Doing free energy maximisation")
         optimizer = tf.keras.optimizers.Adam(learning_rate=kwargs.get("learning_rate", 0.05))
         for idx in range(max_iterations):
             with tf.GradientTape(persistent=False) as t:
                 # Loss function
-                self.cost = self.cost_free_energy()
+                self.cost = self._cost_free_energy()
             gradients = t.gradient(self.cost, self.all_post.vars)
 
             # Apply the gradient
             optimizer.apply_gradients(zip(gradients, self.all_post.vars))
-            self.log_iter(idx+1, record_history)
+            self._log_iter(idx+1, record_history)
 
-    def run_analytic(self, max_iterations=10, record_history=False, progress_cb=None, **kwargs):
+    def _run_analytic(self, max_iterations=10, record_history=False, progress_cb=None, **kwargs):
         self.log.info("Doing analytic VB")
         # Use analytic update equations to update model and noise parameters iteratively
-        self.cost_free_energy()
-        self.log_iter(0, record_history)
+        self._cost_free_energy()
+        self._log_iter(0, record_history)
         for idx in range(max_iterations):
             # Update model parameters
             self.orig_mean = self.post.mean.numpy()
             self.post.avb_update(self)
-            self.debug_output("Updated theta")
+            self._debug_output("Updated theta")
     
             # Update noise parameters
             self.noise_post.avb_update(self)
-            self.debug_output("Updated noise")
+            self._debug_output("Updated noise")
 
             # Update priors (e.g. spatial, ARD)
             self.prior_updates = []
             for prior in self.param_priors:
                 prior.avb_update(self)
 
-            self.cost_free_energy()
-            self.log_iter(idx+1, record_history)
+            self._cost_free_energy()
+            self._log_iter(idx+1, record_history)
             if progress_cb is not None:
                 progress_cb(float(idx)/float(max_iterations))
 
-    def run(self, **kwargs):
-        self.history = {}
-        self.create_prior_post(**kwargs)
-
-        method = kwargs.pop("method", "analytic")
-        if method == "leastsq":
-            self.run_leastsq(**kwargs)
-        elif method == "maxf":
-            self.run_maxf(**kwargs)
-        elif method == "analytic":
-            self.run_analytic(**kwargs)
-        else:
-            raise ValueError("Unknown optimization method: %s" % method)
-
-        if kwargs.get("record_history", False):
-            for item, item_history in self.history.items():
-                # Reshape history items so history is in last axis not first
-                trans_axes = list(range(1, item_history[0].ndim+1)) + [0,]
-                self.history[item] = np.array(item_history).transpose(trans_axes)
-
-        # Make final output into Numpy arrays
-        for attr in ("model_mean", "model_var", "noise_mean", "noise_var", "free_energy_vox", "free_energy_node",
-                     "modelfit"):
-            setattr(self, attr, getattr(self, attr).numpy())
-
-    def log_iter(self, iter, history):
+    def _log_iter(self, iter, history):
         iter_data = {"iter" : iter}
         attrs = ["model_mean", "model_var", "noise_mean", "noise_var", "free_energy_vox", "free_energy_node", "cost"]
         fmt = "Iteration %(iter)i: params=%(model_mean)s, var=%(model_var)s, noise mean=%(noise_mean)e, var=%(noise_var)e, F=%(free_energy_vox)e, %(free_energy_node)e, %(cost)e"
