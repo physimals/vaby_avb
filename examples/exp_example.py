@@ -58,4 +58,4 @@ logging.getLogger().addHandler(handler)
 
 # Run AVB inference
 avb = Avb(t, vaby.DataModel(DATA_NOISY), model)
-avb.run(method="leastsq", maxits=20, learning_rate=0.1, debug="--debug" in sys.argv)
+avb.run(method="analytic", max_iterations=10, learning_rate=0.1, debug="--debug" in sys.argv)
