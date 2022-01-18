@@ -8,11 +8,9 @@ except ImportError:
     __timestamp__ = "Unknown timestamp"
 
 from .avb import Avb
-from .main import run
 
 __all__ = [
     "__version__",
     "__timestamp__",
     "Avb",
-    "run",
 ]
