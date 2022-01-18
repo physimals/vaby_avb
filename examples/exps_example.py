@@ -10,8 +10,7 @@ import sys
 import numpy as np
 import nibabel as nib
 
-from vaby_avb import run
-import vaby
+import vaby 
 
 # Uncomment line below to start the random number generator off with the same seed value
 # each time, for repeatable results.
@@ -27,13 +26,13 @@ NOISE_STD_TRUTH = np.sqrt(NOISE_VAR_TRUTH)
 # Gaussian distribution. Reducing the number of samples should make
 # the inference less 'confident' - i.e. the output variances for
 # MU and BETA will increase
-model = vaby.get_model_class("exp")(None)
 N = 100
 DT = 2.0 / N
 NX, NY, NZ = 10, 10, 10
 t = np.array([float(t)*DT for t in range(N)])
 params_voxelwise = np.tile(np.array(PARAMS_TRUTH)[..., np.newaxis, np.newaxis], (1, NX*NY*NZ, 1))
-DATA_CLEAN = model.evaluate(params_voxelwise, t).numpy()
+temp_model = vaby.get_model_class("exp")(None, dt=DT)
+DATA_CLEAN = temp_model.evaluate(params_voxelwise, t).numpy()
 DATA_NOISY = DATA_CLEAN + np.random.normal(0, NOISE_STD_TRUTH, DATA_CLEAN.shape)
 niidata = DATA_NOISY.reshape((NX, NY, NZ, N))
 nii = nib.Nifti1Image(niidata, np.identity(4))
@@ -44,6 +43,7 @@ nii.to_filename("data_exp_noisy.nii.gz")
 #os.system("fabber_exp --data=data_exp_noisy  --max-iterations=20 --output=exps_example_fabber_out --dt=%.3f --model=exp --num-exps=1 --method=vb --noise=white --overwrite" % DT)
 
 options = {
+    "method" : "avb",
     "dt" : DT,
     "save_mean" : True,
     "save_free_energy" : True,
@@ -53,4 +53,4 @@ options = {
     "max_iterations" : 20,
 }
 
-runtime, avb = run("data_exp_noisy.nii.gz", "exp", "exps_example_out", **options)
+runtime, avb = vaby.run("data_exp_noisy.nii.gz", "exp", "exps_example_out", **options)

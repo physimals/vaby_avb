@@ -41,6 +41,7 @@ print("Data samples (clean):")
 print(DATA_CLEAN)
 print("Data samples (noisy):")
 print(DATA_NOISY)
+data_model = vaby.DataModel(DATA_NOISY)
 
 # Run Fabber as a comparison if desired
 #import os
@@ -57,5 +58,6 @@ handler.setFormatter(logging.Formatter('%(levelname)s : %(message)s'))
 logging.getLogger().addHandler(handler)
 
 # Run AVB inference
-avb = Avb(t, vaby.DataModel(DATA_NOISY), model)
-avb.run(method="analytic", max_iterations=10, learning_rate=0.1, debug="--debug" in sys.argv)
+fwd_model = vaby.get_model_class("exp")(data_model, dt=DT)
+avb = Avb(data_model, fwd_model)
+avb.run(max_iterations=10,  debug="--debug" in sys.argv)
