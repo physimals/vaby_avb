@@ -5,7 +5,7 @@ VABY_AVB - Priors for model and noise parameters
 import numpy as np
 import tensorflow as tf
 
-from vaby.utils import LogBase
+from vaby.utils import LogBase, TF_DTYPE, NP_DTYPE
 from vaby.dist import Normal
 
 def get_prior(idx, param, data_model, post, **kwargs):
@@ -79,8 +79,8 @@ class NormalPrior(ParameterPrior):
         while np.array(variance).ndim < 1:
             variance = np.full((nn,), variance)
 
-        self.mean = tf.constant(mean, dtype=np.float32)
-        self.var = tf.constant(variance, dtype=np.float32)
+        self.mean = tf.constant(mean, dtype=NP_DTYPE)
+        self.var = tf.constant(variance, dtype=NP_DTYPE)
         self.vars = []
 
 class MRFSpatialPrior(ParameterPrior):
@@ -119,21 +119,21 @@ class MRFSpatialPrior(ParameterPrior):
         ) # [W, W] sparse
 
         # Diagonal of Laplacian matrix [W]
-        self.laplacian_diagonal = tf.constant(-data_model.model_space.laplacian.diagonal(), dtype=tf.float32)
+        self.laplacian_diagonal = tf.constant(-data_model.model_space.laplacian.diagonal(), dtype=TF_DTYPE)
 
         # Set up spatial smoothing parameter - infer the log so always positive
         ak_init = kwargs.get("ak", 1e-5)
         if kwargs.get("infer_ak", True):
-            self.log_ak = tf.Variable(np.log(ak_init), name="log_ak", dtype=tf.float32)
+            self.log_ak = tf.Variable(np.log(ak_init), name="log_ak", dtype=TF_DTYPE)
             self.vars = [self.log_ak]
         else:
-            self.log_ak = tf.constant(np.log(ak_init), name="log_ak", dtype=tf.float32)
+            self.log_ak = tf.constant(np.log(ak_init), name="log_ak", dtype=TF_DTYPE)
             self.vars = []
 
         self.mean = tf.fill((self.n_nodes,), 0.0)
         self.var = tf.fill((self.n_nodes,), 1/self.ak)
 
-    def build(self):
+    def build(self, avb):
         self.ak = tf.exp(self.log_ak)
 
         # For the spatial mean we essentially need the (weighted) average of 
@@ -215,7 +215,7 @@ class MRFSpatialPrior(ParameterPrior):
 
         #self.log.info("MRFSpatialPrior::Calculate aK %i: New aK: %e", self.idx, ak)
         self.log_ak.assign(tf.math.log(aK))
-        self.build()
+        self.build(avb)
 
 class ARDPrior(ParameterPrior):
     """
@@ -228,11 +228,11 @@ class ARDPrior(ParameterPrior):
         LogBase.__init__(self)
         self.fixed_var = init_variance
         self.idx = idx
-        self.mean = tf.fill((data_model.model_space.size,), tf.constant(0.0, dtype=tf.float32))
+        self.mean = tf.fill((data_model.model_space.size,), tf.constant(0.0, dtype=TF_DTYPE))
 
         # Set up inferred precision parameter phi - infer the log so always positive
         default_phi = np.full((data_model.model_space.size, ), np.log(1e-12))
-        self.log_phi = tf.Variable(default_phi, name="log_phi", dtype=tf.float32)
+        self.log_phi = tf.Variable(default_phi, name="log_phi", dtype=TF_DTYPE)
         self.vars = [self.log_phi]
 
     def build(self):
@@ -279,8 +279,8 @@ class NoisePrior(LogBase):
         :param scale Prior noise scale parameter [V] or constant
         """
         LogBase.__init__(self)
-        self.s = tf.constant(s, dtype=tf.float32)
-        self.c = tf.constant(c, dtype=tf.float32)
+        self.s = tf.constant(s, dtype=TF_DTYPE)
+        self.c = tf.constant(c, dtype=TF_DTYPE)
         self.mean = self.c*self.s
         self.var = self.s*self.s*self.c
         self.prec = 1/self.var

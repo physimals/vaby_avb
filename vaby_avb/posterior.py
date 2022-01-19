@@ -6,7 +6,7 @@ import math
 import numpy as np
 import tensorflow as tf
 
-from vaby.utils import LogBase
+from vaby.utils import LogBase, TF_DTYPE, NP_DTYPE
 
 class Posterior(LogBase):
     """
@@ -74,10 +74,6 @@ class Posterior(LogBase):
         """
         raise NotImplementedError()
 
-    @property
-    def is_gaussian(self):
-        return isinstance(self, NormalPosterior)
-
 class NoisePosterior(Posterior):
     """
     Gamma posterior for noise parameter.
@@ -111,8 +107,8 @@ class NoisePosterior(Posterior):
             if np.array(init_c).ndim == 0:
                 init_c = tf.fill((nv, ), init_c)
 
-        self.log_s = tf.Variable(tf.math.log(init_s), dtype=tf.float32, name="noise_s")
-        self.log_c = tf.Variable(tf.math.log(init_c), dtype=tf.float32, name="noise_c")
+        self.log_s = tf.Variable(tf.math.log(init_s), dtype=TF_DTYPE, name="noise_s")
+        self.log_c = tf.Variable(tf.math.log(init_c), dtype=TF_DTYPE, name="noise_c")
         self.vars = [self.log_s, self.log_c]
 
     def build(self):
@@ -130,7 +126,7 @@ class NoisePosterior(Posterior):
 
         :return: Sequence of tuples: (variable, new value)
         """
-        c_new = tf.fill((avb.n_voxels,), (tf.cast(avb.n_tpts, tf.float32) - 1)/2 + avb.noise_prior.c)
+        c_new = tf.fill((avb.n_voxels,), (NP_DTYPE(avb.n_tpts) - 1)/2 + avb.noise_prior.c)
         # FIXME need k (residuals) in voxel-space
         dmu = avb.orig_mean - avb.post.mean
         dk = tf.einsum("ijk,ik->ij", avb.J, dmu)
@@ -188,15 +184,15 @@ class MVNPosterior(Posterior):
                 if var is None:
                     var = tf.fill((self.num_nodes, ), p.post_dist.var)
 
-                init_mean.append(tf.cast(mean, tf.float32))
-                init_var.append(tf.cast(var, tf.float32))
+                init_mean.append(tf.cast(mean, TF_DTYPE))
+                init_var.append(tf.cast(var, TF_DTYPE))
 
             # Make shape [W, P]
             init_mean = tf.stack(init_mean, axis=-1)
             init_var = tf.stack(init_var, axis=-1)
             init_cov = tf.linalg.diag(init_var)
 
-        self.mean = tf.Variable(init_mean, dtype=tf.float32, name="post_mean")
+        self.mean = tf.Variable(init_mean, dtype=TF_DTYPE, name="post_mean")
         self.vars = [self.mean,]
 
         self.force_positive_var = kwargs.get("force_positive_var", False)
@@ -212,7 +208,7 @@ class MVNPosterior(Posterior):
             self.off_diag_vars = tf.Variable(init_cov_chol, name="post_off_diag_cov")
             self.vars.append(self.off_diag_vars)
         else:
-            self.cov = tf.Variable(init_cov, dtype=tf.float32, name="post_cov")
+            self.cov = tf.Variable(init_cov, dtype=TF_DTYPE, name="post_cov")
             self.vars.append(self.cov)
 
     def build(self):

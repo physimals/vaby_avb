@@ -11,7 +11,7 @@ import math
 import numpy as np
 import tensorflow as tf
 
-from vaby.utils import InferenceMethod
+from vaby.utils import InferenceMethod, TF_DTYPE
 
 from .prior import MVNPrior, NoisePrior, get_prior
 from .posterior import MVNPosterior, NoisePosterior, CombinedPosterior
@@ -158,8 +158,8 @@ class Avb(InferenceMethod):
         c0 = self.noise_prior.c
         s = self.noise_post.s
         s0 = self.noise_prior.s
-        N = tf.cast(self.n_tpts, tf.float32)
-        NP = tf.cast(self.n_params, tf.float32)
+        N = tf.cast(self.n_tpts, TF_DTYPE)
+        NP = tf.cast(self.n_params, TF_DTYPE)
         #P = self.post.prec
         P0 = self.prior.prec
         C = self.post.cov
@@ -254,7 +254,7 @@ class Avb(InferenceMethod):
 
     def _create_prior_post(self, **kwargs):
         # Set up prior and posterior
-        self.tpts = tf.constant(self.tpts, dtype=tf.float32) # FIXME
+        #self.tpts = tf.constant(self.tpts, dtype=TF_DTYPE) # FIXME
         self.noise_post = NoisePosterior(self.data_model, force_positive=kwargs.get("use_adam", False), init=self.data_model.post_init)
         self.post = MVNPosterior(self.data_model, self.fwd_model.params, self.tpts, init=self.data_model.post_init, **kwargs)
 
