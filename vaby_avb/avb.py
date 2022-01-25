@@ -287,18 +287,18 @@ class Avb(InferenceMethod):
         self.model_var = tf.stack([self.post.cov[:, v, v] for v in range(len(self.fwd_model.params))]) # [P, W] FIXME transform
         self.noise_mean, self.noise_prec = self.noise_post.mean, self.noise_post.prec # [V], [V]
         self.noise_var = 1.0/self.noise_prec # [V]
-        modelfit_nodes = self.fwd_model.evaluate(tf.expand_dims(self.model_mean, axis=-1), self.tpts) # [W, B]
-        self.modelfit = tf.squeeze(self.data_model.model_to_data(tf.expand_dims(modelfit_nodes, 1)), 1) # [V, B]
-        self.k = self.data - self.modelfit # [V, B, P]
+        modelfit_nodes = self.fwd_model.evaluate(tf.expand_dims(self.model_mean, axis=-1), self.tpts) # [W, T]
+        self.modelfit = self.data_model.model_to_data(modelfit_nodes) # [V, T]
+        self.k = self.data - self.modelfit # [V, T]
 
     def _linearise(self):
-        self.J = self._jacobian() # [W, B, P]
-        #self.J = self._jacobian_autodiff() # [W, B, P]
-        self.Jt = tf.transpose(self.J, (0, 2, 1)) # [W, P, B]
+        self.J = self._jacobian() # [W, T, P]
+        #self.J = self._jacobian_autodiff() # [W, T, P]
+        self.Jt = tf.transpose(self.J, (0, 2, 1)) # [W, P, T]
         self.JtJ = tf.linalg.matmul(self.Jt, self.J) # [W, P, P]
 
     def _cost_free_energy(self):
-        self.prior.build()
+        self.prior.build(self)
         self.all_post.build()
         self._linearise()
         self._evaluate()
@@ -373,11 +373,12 @@ class Avb(InferenceMethod):
 
         # Pick up any spatial smoothing params to output
         # FIXME ugly and hacky
-        idx = 1
-        while hasattr(self, "ak%i" % idx):
-            attrs.append("ak%i" % idx)
-            fmt += ", ak%i=%%(ak%i)e" % (idx, idx)
-            idx += 1
+        for idx, var in enumerate(self.prior.vars):
+            print(var)
+            attr = "ak%i" % idx
+            attrs.append(attr)
+            setattr(self, attr, var)
+            fmt += ", %s=%%(%s)e" % (attr, attr)
 
         for attr in attrs:
             if not hasattr(self, attr):

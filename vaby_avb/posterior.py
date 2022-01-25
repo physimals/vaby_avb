@@ -130,13 +130,15 @@ class NoisePosterior(Posterior):
         # FIXME need k (residuals) in voxel-space
         dmu = avb.orig_mean - avb.post.mean
         dk = tf.einsum("ijk,ik->ij", avb.J, dmu)
-        k = avb.k + dk
+        dk_data = avb.data_model.model_to_data(dk)
+        k = avb.k + dk_data # [V, T]
         t1 = 0.5 * tf.reduce_sum(tf.square(k), axis=-1) # [V]
         # FIXME need CJtJ in voxel-space?
-        t15 = tf.matmul(avb.post.cov, avb.JtJ) # [V, P, P]
-        t2 = 0.5 * tf.linalg.trace(t15) # [V]
+        t15 = tf.matmul(avb.post.cov, avb.JtJ) # [W, P, P]
+        t2 = 0.5 * tf.linalg.trace(t15) # [W]
+        t2_data = avb.data_model.model_to_data(t2) # [V]
         t0 = 1/avb.noise_prior.s # [V]
-        s_new = 1/(t0 + t1 + t2)
+        s_new = 1/(t0 + t1 + t2_data)
 
         self.log_s.assign(tf.math.log(s_new))
         self.log_c.assign(tf.math.log(c_new))
@@ -175,6 +177,9 @@ class MVNPosterior(Posterior):
                     mean, var = p.post_init(idx, tpts, data_model.data_space.srcdata.flat)
                     if mean is not None:
                         mean = p.post_dist.transform.int_values(mean, ns=tf.math)
+                        print("Dataspace", idx, mean.shape, np.mean(mean), np.min(mean), np.max(mean))
+                        mean = data_model.data_to_model(mean)
+                        print("Modelspace", idx, mean.shape, np.mean(mean), np.min(mean), np.max(mean))
                     if var is not None:
                         # FIXME transform
                         pass
@@ -233,12 +238,15 @@ class MVNPosterior(Posterior):
 
         :return: Sequence of tuples: (variable, new value)
         """
-        prec_new = tf.expand_dims(tf.expand_dims(avb.noise_post.s, -1), -1) * tf.expand_dims(tf.expand_dims(avb.noise_post.c, -1), -1) * avb.JtJ + avb.prior.prec
+        s_model = avb.data_model.data_to_model(avb.noise_post.s) # [W]
+        c_model = avb.data_model.data_to_model(avb.noise_post.c) # [W]
+        k_model = avb.data_model.data_to_model(avb.k) # [W, T]
+        prec_new = tf.expand_dims(tf.expand_dims(s_model, -1), -1) * tf.expand_dims(tf.expand_dims(c_model, -1), -1) * avb.JtJ + avb.prior.prec
         cov_new = tf.linalg.inv(prec_new)
-       
-        t1 = tf.einsum("ijk,ik->ij", avb.J, self.mean)
-        t15 = tf.einsum("ijk,ik->ij", avb.Jt, (avb.k + t1))
-        t2 = tf.expand_dims(avb.noise_post.s, -1) * tf.expand_dims(avb.noise_post.c, -1) * t15
+
+        t1 = tf.einsum("ijk,ik->ij", avb.J, self.mean) # [W]
+        t15 = tf.einsum("ijk,ik->ij", avb.Jt, (k_model + t1)) # [W, T]
+        t2 = tf.expand_dims(s_model, -1) * tf.expand_dims(c_model, -1) * t15 # [W, T]
         t3 = tf.einsum("ijk,ik->ij", avb.prior.prec, avb.prior.mean)
         mean_new = tf.einsum("ijk,ik->ij", cov_new, (t2 + t3))
 
@@ -260,12 +268,12 @@ class CombinedPosterior(LogBase):
         self.noise_post.build()
 
         # FIXME in surface mode noise not on nodes and this will not work
-        self.mean = tf.concat([self.model_post.mean, tf.reshape(self.noise_post.mean, (-1, 1))], axis=1)
+        #self.mean = tf.concat([self.model_post.mean, tf.reshape(self.noise_post.mean, (-1, 1))], axis=1)
 
-        cov_model_padded = tf.pad(self.model_post.cov, tf.constant([[0, 0], [0, 1], [0, 1]]))
-        cov_noise = tf.reshape(self.noise_post.var, (-1, 1, 1))
-        cov_noise_padded = tf.pad(cov_noise, tf.constant([[0, 0], [self.model_post.num_params, 0], [self.model_post.num_params, 0]]))
-        self.cov = cov_model_padded + cov_noise_padded
+        #cov_model_padded = tf.pad(self.model_post.cov, tf.constant([[0, 0], [0, 1], [0, 1]]))
+        #cov_noise = tf.reshape(self.noise_post.var, (-1, 1, 1))
+        #cov_noise_padded = tf.pad(cov_noise, tf.constant([[0, 0], [self.model_post.num_params, 0], [self.model_post.num_params, 0]]))
+        #self.cov = cov_model_padded + cov_noise_padded
 
     def avb_update(self, avb):
         self.model_post.avb_update(avb)
