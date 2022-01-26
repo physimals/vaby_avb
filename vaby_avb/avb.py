@@ -367,30 +367,15 @@ class Avb(InferenceMethod):
                 progress_cb(float(idx)/float(max_iterations))
 
     def _log_iter(self, iter, history):
-        iter_data = {"iter" : iter}
-        attrs = ["model_mean", "model_var", "noise_mean", "noise_var", "free_energy_vox", "free_energy_node", "cost"]
-        fmt = "Iteration %(iter)i: params=%(model_mean)s, var=%(model_var)s, noise mean=%(noise_mean)e, var=%(noise_var)e, F=%(free_energy_vox)e, %(free_energy_node)e, %(cost)e"
+        # FIXME history
+        #if history:
+        #    if attr not in self.history: self.history[attr] = []
+        #    self.history[attr].append(data)
 
-        # Pick up any spatial smoothing params to output
-        # FIXME ugly and hacky
-        for idx, var in enumerate(self.prior.vars):
-            attr = "ak%i" % idx
-            attrs.append(attr)
-            setattr(self, attr, var)
-            fmt += ", %s=%%(%s)e" % (attr, attr)
-
-        for attr in attrs:
-            if not hasattr(self, attr):
-                iter_data[attr] = 0
-                continue
-            else:
-                data = getattr(self, attr).numpy()
-                if data.size > 1:
-                    # voxelwise data
-                    iter_data[attr] = np.mean(data, axis=-1)
-                else:
-                    iter_data[attr] = data
-            if history:
-                if attr not in self.history: self.history[attr] = []
-                self.history[attr].append(data)
-        self.log.info(fmt % iter_data)
+        self.log.info(" - Iteration %04d" % iter)
+        self.log.info("   - Mean: %s" % self.model_mean.numpy().mean(1))
+        self.log.info("   - Variance: %s" % self.model_var.numpy().mean(1))
+        self.log.info("   - Noise: %s" % np.sqrt(1/self.noise_mean.numpy()).mean())
+        if self.prior.vars:
+            self.log.info("   - aks: %s" % [v.numpy().mean() for v in self.prior.vars])
+        self.log.info("   - F: %.4g (Voxel: %.4g, Node: %.4g)" % (self.cost_fe.numpy(), self.free_energy_vox.numpy().mean(), self.free_energy_node.numpy().mean()))
