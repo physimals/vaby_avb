@@ -260,7 +260,7 @@ class Avb(InferenceMethod):
 
         self.noise_prior = NoisePrior(s=kwargs.get("noise_s0", 1e6), c=kwargs.get("noise_c0", 1e-6))
         self.param_priors = [
-            get_prior(idx, p, self.data_model, self.post, **kwargs) 
+            get_prior(idx, p, self.data_model, **kwargs) 
             for idx, p in enumerate(self.fwd_model.params)
         ]
         self.prior = MVNPrior(self.param_priors)
@@ -298,7 +298,7 @@ class Avb(InferenceMethod):
         self.JtJ = tf.linalg.matmul(self.Jt, self.J) # [W, P, P]
 
     def _cost_free_energy(self):
-        self.prior.build(self)
+        self.prior.build(self.post)
         self.all_post.build()
         self._linearise()
         self._evaluate()
@@ -307,7 +307,7 @@ class Avb(InferenceMethod):
         return self.cost_fe
 
     def _cost_leastsq(self):
-        self.prior.build()
+        self.prior.build(self.post)
         self.all_post.build()
         self._linearise()
         self._evaluate()
@@ -374,7 +374,6 @@ class Avb(InferenceMethod):
         # Pick up any spatial smoothing params to output
         # FIXME ugly and hacky
         for idx, var in enumerate(self.prior.vars):
-            print(var)
             attr = "ak%i" % idx
             attrs.append(attr)
             setattr(self, attr, var)

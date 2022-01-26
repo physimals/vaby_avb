@@ -1,5 +1,5 @@
 """
-VABY_AVB - Priors for model and noise parameters
+VABY_AVB: Parameter priors
 """
 
 import numpy as np
@@ -8,22 +8,22 @@ import tensorflow as tf
 from vaby.utils import LogBase, TF_DTYPE, NP_DTYPE
 from vaby.dist import Normal
 
-def get_prior(idx, param, data_model, post, **kwargs):
+def get_prior(idx, param, data_model, **kwargs):
     """
     Factory method to return a vertexwise prior
     """
     prior = None
     if isinstance(param.prior_dist, Normal):
         if param.prior_type == "N":
-            prior = NormalPrior(data_model, param.prior_dist.mean, param.prior_dist.var, **kwargs)
+            prior = NormalPrior(data_model, idx, param.prior_dist, **kwargs)
         elif param.prior_type == "M":
-            prior = MRFSpatialPrior(data_model, post, idx, param.prior_dist.var, **kwargs)
+            prior = MRFSpatialPrior(data_model, idx, param.prior_dist, **kwargs)
         #elif param.prior_type == "M2":
         #    prior = MRF2SpatialPrior(data_model.n_vertices, param.prior_dist.mean, param.prior_dist.var, **kwargs)
         #elif param.prior_type == "Mfab":
         #    prior = FabberMRFSpatialPrior(data_model.n_vertices, param.prior_dist.mean, param.prior_dist.var, **kwargs)
         elif param.prior_type == "A":
-            prior = ARDPrior(data_model, idx, param.prior_dist.var, **kwargs)
+            prior = ARDPrior(data_model, idx, param.prior_dist, **kwargs)
 
     if prior is not None:
         return prior
@@ -32,11 +32,43 @@ def get_prior(idx, param, data_model, post, **kwargs):
 
 class ParameterPrior(LogBase):
     """
-    Gaussian prior for a single model parameter
-    
+    Base class for a prior
+
+    All priors must define the following attributes:
+
     :attr mean: Mean value [W] or [1]
     :attr var: Variance [W] or [1]
     """
+
+    def __init__(self, data_model, idx):
+        """
+        Constructor
+
+        Subclasses must call this constructor, as well as define any
+        constant tensors and any Variable tensors. Tensors which depend
+        on Variables must be defined in ``build()``
+
+        :param data_model: DataModel object
+        """
+        LogBase.__init__(self)
+        self.data_model = data_model
+        self.idx = idx
+
+    def build(self, post):
+        """
+        Define tensors that depend on any Variables in the prior or on the current
+        state of the posterior
+        
+        This must not be done in the constructor. This method only needs to be
+        implemented for priors that have inferrable variables
+
+        :param post: Posterior object
+        """
+        pass
+
+    @property
+    def size(self):
+        return self.data_model.model_space.size
 
     def free_energy(self):
         """
@@ -44,16 +76,13 @@ class ParameterPrior(LogBase):
         """
         return 0
 
-    def build(self, avb):
-        pass
-
     def avb_update(self, avb):
         """
         Update prior in analytic update mode
 
         Required for adaptive priors, e.g. spatial, ARD. This method should
         use tf.assign to update any tf.Variable instances that control
-        it's operation, and also update any dependency tensors.
+        it's operation, and also update any dependency tensors by calling build().
 
         :param avb: Avb object
         """
@@ -61,39 +90,37 @@ class ParameterPrior(LogBase):
 
 class NormalPrior(ParameterPrior):
     """
-    Fixed prior for a single model parameter
+    Fixed Gaussian prior for a single model parameter
     """
     
-    def __init__(self, data_model, mean, variance, **kwargs):
+    def __init__(self, data_model, idx, prior_dist, **kwargs):
         """
-        :param mean: Prior mean value as float or Numpy array [W]
-        :param variance: Prior mean value as float or Numpy array [W]
         """
-        LogBase.__init__(self)
+        ParameterPrior.__init__(self, data_model, idx)
+        self.scalar_mean = prior_dist.mean
+        self.scalar_var = prior_dist.var
 
-        # Mean/variance is usually specified globally so
-        # make sure it has a nodewise dimension
-        nn = data_model.model_space.size
-        while np.array(mean).ndim < 1:
-            mean = np.full((nn,), mean)
-        while np.array(variance).ndim < 1:
-            variance = np.full((nn,), variance)
-
-        self.mean = tf.constant(mean, dtype=NP_DTYPE)
-        self.var = tf.constant(variance, dtype=NP_DTYPE)
+        self.mean = tf.fill([self.size], NP_DTYPE(self.scalar_mean))
+        self.var = tf.fill([self.size], NP_DTYPE(self.scalar_var))
         self.vars = []
+
+    def __str__(self):
+        return "Non-spatial prior (%f, %f)" % (self.scalar_mean, self.scalar_var)
 
 class MRFSpatialPrior(ParameterPrior):
     """
-    Spatial prior based on a Markov Random Field
+    ParameterPrior which performs adaptive spatial regularization based on the 
+    contents of neighbouring nodes using the Markov Random Field method
     """
 
-    def __init__(self, data_model, post, idx, init_variance, **kwargs):
+    def __init__(self, data_model, idx, prior_dist, **kwargs):
         """
         """
-        LogBase.__init__(self)
-        self.idx = idx
-        self.n_nodes = data_model.model_space.size
+        ParameterPrior.__init__(self, data_model, idx)
+        self.q1 = kwargs.get('gamma_q1', 1.0)
+        self.q2 = kwargs.get('gamma_q2', 10)
+        self.log.debug("gamma q1", self.q1)
+        self.log.debug("gamma q2", self.q2)
 
         # Laplacian matrix
         self.laplacian = data_model.model_space.laplacian
@@ -103,7 +130,7 @@ class MRFSpatialPrior(ParameterPrior):
         self.laplacian_nodiag = tf.SparseTensor(
             indices=self.laplacian.indices[offdiag_mask],
             values=self.laplacian.values[offdiag_mask], 
-            dense_shape=[self.n_nodes, self.n_nodes]
+            dense_shape=[self.size, self.size]
         ) # [W, W] sparse
 
         # Diagonal of Laplacian matrix [W]
@@ -111,22 +138,28 @@ class MRFSpatialPrior(ParameterPrior):
         self.laplacian_diagonal = -self.laplacian.values[diag_mask]
 
         # Set up spatial smoothing parameter - infer the log so always positive
-        self.num_nodes = data_model.model_space.size
         self.num_aks = data_model.model_space.num_strucs
         self.sub_strucs = data_model.model_space.parts
         self.slices = data_model.model_space.slices
-        ak_init = tf.fill([self.num_aks], kwargs.get("ak", 1e-5))
+        ak_init = tf.fill([self.num_aks], NP_DTYPE(kwargs.get("ak", 1e-5)))
         if kwargs.get("infer_ak", True):
-            self.log_ak = tf.Variable(np.log(ak_init), name="log_ak", dtype=TF_DTYPE)
+            self.log_ak = tf.Variable(np.log(ak_init), dtype=TF_DTYPE)
             self.vars = [self.log_ak]
         else:
-            self.log_ak = tf.constant(np.log(ak_init), name="log_ak", dtype=TF_DTYPE)
+            self.log_ak = tf.constant(np.log(ak_init), dtype=TF_DTYPE)
             self.vars = []
 
-        self.mean = tf.fill((self.n_nodes,), 0.0)
-        self.var = tf.fill((self.n_nodes,), 1/ak_init)
+        #self.mean = tf.fill((self.size,), 0.0)
+        #self.var = tf.fill((self.size,), 1/ak_init)
 
-    def build(self, avb):
+    def __str__(self):
+        return "MRF spatial prior"
+
+    def build(self, post):
+        """
+        self.ak is a nodewise tensor containing the relevant ak for each node
+        (one per sub-structure)
+        """
         aks_nodewise = []
         for struc_idx, struc in enumerate(self.sub_strucs):
             aks_nodewise.append(tf.fill([struc.size], tf.exp(self.log_ak[struc_idx])))
@@ -136,7 +169,7 @@ class MRFSpatialPrior(ParameterPrior):
         # nearest neighbour mean values. This does not involve the current posterior
         # mean at the voxel itself!
         # This is the equivalent of ApplyToMVN in Fabber
-        node_mean = tf.expand_dims(avb.post.mean[:, self.idx], 1) # [W]
+        node_mean = tf.expand_dims(post.mean[:, self.idx], 1) # [W]
         node_nn_total_weight = tf.sparse.reduce_sum(self.laplacian_nodiag, axis=1) # [W]
         spatial_mean = tf.sparse.sparse_dense_matmul(self.laplacian_nodiag, node_mean) # [W]
         spatial_mean = tf.squeeze(spatial_mean, 1)
@@ -189,7 +222,7 @@ class MRFSpatialPrior(ParameterPrior):
         # q1 = 10 (1/q1 = 0.1) and q2 = 1.0
         # FIXME for multiple aks, gk, hk shape [T]
         gk = 1 / (0.5 * trace_term + 0.5 * term2 + 0.1)
-        hK = self.n_nodes * 0.5 + 1.0
+        hK = self.size * 0.5 + 1.0
         aK = gk * hK # [T]
 
         # Checks below are from Fabber - unsure if required
@@ -216,32 +249,30 @@ class MRFSpatialPrior(ParameterPrior):
 
         #self.log.info("MRFSpatialPrior::Calculate aK %i: New aK: %e", self.idx, ak)
         self.log_ak.assign(tf.reshape(tf.math.log(aK), [-1]))
-        self.build(avb)
+        self.build(avb.post)
 
 class ARDPrior(ParameterPrior):
     """
     Automatic Relevence Detection prior
     """
-
-    def __init__(self, data_model, idx, init_variance, **kwargs):
+    def __init__(self, data_model, idx, prior_dist, **kwargs):
         """
         """
-        LogBase.__init__(self)
-        self.fixed_var = init_variance
-        self.idx = idx
-        self.mean = tf.fill((data_model.model_space.size,), tf.constant(0.0, dtype=TF_DTYPE))
+        NormalPrior.__init__(self, data_model, idx, prior_dist, **kwargs)
+        self.fixed_var = prior_dist.var
+        self.mean = tf.fill((self.size,), NP_DTYPE(0))
 
         # Set up inferred precision parameter phi - infer the log so always positive
-        default_phi = np.full((data_model.model_space.size, ), np.log(1e-12))
-        self.log_phi = tf.Variable(default_phi, name="log_phi", dtype=TF_DTYPE)
+        # FIXME should we use hardcoded default_phi or the supplied variance?
+        default_phi = np.full((self.size, ), np.log(1e-12))
+        self.log_phi = tf.Variable(default_phi, dtype=TF_DTYPE)
         self.vars = [self.log_phi]
 
-    def build(self, avb):
-        self.phi = tf.clip_by_value(tf.exp(self.log_phi), 0, 1e6)
+    def __str__(self):
+        return "ARD prior"
 
-        # FIXME hack to make phi get printed after each iteration using code written for
-        # the MRF spatial prior
-        self.ak = tf.reduce_mean(self.phi)
+    def build(self, post):
+        self.phi = tf.clip_by_value(tf.exp(self.log_phi), 0, 1e6)
         self.var = 1/self.phi
 
     def avb_update(self, avb):
@@ -257,7 +288,7 @@ class ARDPrior(ParameterPrior):
         var = avb.post.cov[:, self.idx, self.idx]
         new_var = tf.square(mean) + var
         self.log_phi.assign(tf.math.log(1/new_var))
-        self.build(avb)
+        self.build(avb.post)
 
     def free_energy(self):
         # See appendix D of Fabber paper
@@ -310,11 +341,23 @@ class MVNPrior(LogBase):
         LogBase.__init__(self)
         self.param_priors = param_priors
 
-    def build(self, avb):
+    def build(self, post):
         for prior in self.param_priors:
-            prior.build(avb)
+            prior.build(post)
         self.mean = tf.stack([p.mean for p in self.param_priors], axis=1)
         self.var = tf.stack([p.var for p in self.param_priors], axis=1)
         self.cov = tf.linalg.diag(self.var)
         self.prec = tf.linalg.inv(self.cov)
         self.vars = sum([p.vars for p in self.param_priors], [])
+
+    def avb_update(self, avb):
+        """
+        Update the ARD precision when using analytic update mode
+
+        See Appendix 4 of Fabber paper
+
+        :param post: Current posterior
+        :return: Sequence of tuples: (variable to update, tensor to update from)
+        """
+        for prior in self.param_priors:
+            prior.avb_update(avb)
