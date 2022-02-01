@@ -95,7 +95,7 @@ class Avb(InferenceMethod):
             minus_model = self._inference_to_model(minus_param)
             #print(param_idx, plus_model.numpy(), minus_model.numpy())
             # diff [W, B]
-            diff = self.fwd_model.evaluate(plus_model, self.tpts) - self.fwd_model.evaluate(minus_model, self.tpts)
+            diff = self.fwd_model.evaluate(plus_model, self.tpts) - self.fwd_model.evaluate(minus_model, self.tpts) # [W, B]
             #print("Delta\n", delta[param_idx])
             #print("Diff\n", diff)
             J.append(diff / (2*delta[param_idx]))
@@ -287,15 +287,15 @@ class Avb(InferenceMethod):
         self.model_var = tf.stack([self.post.cov[:, v, v] for v in range(len(self.fwd_model.params))]) # [P, W] FIXME transform
         self.noise_mean, self.noise_prec = self.noise_post.mean, self.noise_post.prec # [V], [V]
         self.noise_var = 1.0/self.noise_prec # [V]
-        modelfit_nodes = self.fwd_model.evaluate(tf.expand_dims(self.model_mean, axis=-1), self.tpts) # [W, T]
-        self.modelfit = self.data_model.model_to_data(modelfit_nodes) # [V, T]
-        self.k = self.data - self.modelfit # [V, T]
+        self.modelfit = self.fwd_model.evaluate(tf.expand_dims(self.model_mean, axis=-1), self.tpts) # [W, T]
+        self.modelfit_voxels = self.data_model.model_to_data(self.modelfit) # [V, T]
+        self.k = self.data - self.modelfit_voxels # [V, T]
 
     def _linearise(self):
         self.J = self._jacobian() # [W, T, P]
-        #self.J = self._jacobian_autodiff() # [W, T, P]
-        self.Jt = tf.transpose(self.J, (0, 2, 1)) # [W, P, T]
-        self.JtJ = tf.linalg.matmul(self.Jt, self.J) # [W, P, P]
+        #self.J = self._jacobian_autodiff() # [V, T, P]
+        self.Jt = tf.transpose(self.J, (0, 2, 1)) # [V, P, T]
+        self.JtJ = tf.linalg.matmul(self.Jt, self.J) # [V, P, P]
 
     def _cost_free_energy(self):
         self.prior.build(self.post)
@@ -373,7 +373,9 @@ class Avb(InferenceMethod):
         #    self.history[attr].append(data)
 
         self.log.info(" - Iteration %04d" % iter)
-        self.log.info("   - Mean: %s" % self.model_mean.numpy().mean(1))
+        means_by_struc = self.data_model.model_space.split(self.model_mean, axis=1)
+        for name, means in means_by_struc.items():
+            self.log.info("   - %s mean: %s" % (name, means.numpy().mean(1)))
         self.log.info("   - Variance: %s" % self.model_var.numpy().mean(1))
         self.log.info("   - Noise: %s" % np.sqrt(1/self.noise_mean.numpy()).mean())
         if self.prior.vars:
