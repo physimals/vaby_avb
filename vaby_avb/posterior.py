@@ -1,33 +1,76 @@
 """
 VABY_AVB - Posterior distribution
 """
-import math
-
 import numpy as np
 import tensorflow as tf
 
 from vaby.utils import LogBase, TF_DTYPE, NP_DTYPE
+import vaby.dist as dist
 
+def get_posterior(idx, param, data_model, **kwargs):
+    """
+    Factory method to return a posterior
+
+    :param param: svb.parameter.Parameter instance
+    """
+    initial_mean, initial_var = None, None
+    if param.post_init is not None:
+        initial_mean, initial_var = param.post_init(param, data_model.data_space.srcdata.flat)
+
+        if initial_mean is not None:
+            initial_mean = data_model.data_to_model(initial_mean)
+        if initial_var is not None:
+            initial_var = data_model.data_to_model(initial_var)
+
+    # The size of the posterior (number of positions at which it is 
+    # estimated) is determined by the data_space it refers to, and 
+    # in turn by the data model. If it is global, the reduction will
+    # be applied when creating the GaussianGlobalPosterior later on 
+    post_size = data_model.model_space.size
+
+    if initial_mean is None:
+        initial_mean = tf.fill([post_size], NP_DTYPE(param.post_dist.mean))
+    else:
+        initial_mean = param.post_dist.transform.int_values(NP_DTYPE(initial_mean))
+
+    if initial_var is None:
+        initial_var = tf.fill([post_size], NP_DTYPE(param.post_dist.var))
+    else:
+        # FIXME variance not value?
+        initial_var = param.post_dist.transform.int_values(NP_DTYPE(initial_var))
+
+    if isinstance(param.post_dist, dist.Normal):
+        return NormalPosterior(idx, initial_mean, initial_var, **kwargs)
+
+    #if isinstance(param.post_dist, dist.Normal):
+    #    return GaussianGlobalPosterior(idx, initial_mean, initial_var, **kwargs)
+
+    raise ValueError("Can't create posterior for distribution: %s" % param.post_dist)
+        
 class Posterior(LogBase):
     """
     Posterior distribution for a parameter
 
     Attributes:
-     - ``size`` Number of variates for a multivariate distribution
-     - ``mean`` [W, size] Mean value(s) at each node
-     - ``var`` [W, size] Variance(s) at each node
-     - ``cov`` [W, size, size] Covariance matrix at each node
+     - ``nvars`` Number of variates for a multivariate distribution
+     - ``nnodes`` Number of independent nodes at which the distribution is estimated
      - ``variables`` Sequence of tf.Variable objects containing posterior state
+     - ``mean`` [nnodes, nvars] Mean value(s) at each node
+     - ``var`` [nnodes, nvars] Variance(s) at each node
+     - ``cov`` [nnodes, nvars, nvars] Covariance matrix at each node
 
-    ``size`` and ``variables`` must be initialized in the constructor. Other
+    ``nvars`` (if > 1) and ``variables`` must be initialized in the constructor. Other
     attributes must be initialized either in the constructor (if they are constant
     tensors or tf.Variable) or in ``build`` (if they are dependent tensors). The
     constructor should call ``build`` after initializing constant and tf.Variable
     tensors.
     """
-    def __init__(self, idx, **kwargs):
+    def __init__(self, idx, data_model, **kwargs):
         LogBase.__init__(self, **kwargs)
-        self._idx = idx
+        self.idx = idx
+        self.data_model = data_model
+        self.nnodes = data_model.model_space.size
+        self.nvars = 1
 
     def build(self):
         """
@@ -43,7 +86,7 @@ class Posterior(LogBase):
         """
         Update variables from AVB state
         """
-        pass
+        raise NotImplementedError()
 
     def sample(self, nsamples):
         """
@@ -107,8 +150,8 @@ class NoisePosterior(Posterior):
             if np.array(init_c).ndim == 0:
                 init_c = tf.fill((nv, ), init_c)
 
-        self.log_s = tf.Variable(tf.math.log(init_s), dtype=TF_DTYPE, name="noise_s")
-        self.log_c = tf.Variable(tf.math.log(init_c), dtype=TF_DTYPE, name="noise_c")
+        self.log_s = tf.Variable(tf.math.log(init_s), dtype=TF_DTYPE)
+        self.log_c = tf.Variable(tf.math.log(init_c), dtype=TF_DTYPE)
         self.vars = [self.log_s, self.log_c]
 
     def build(self):
@@ -153,9 +196,8 @@ class MVNPosterior(Posterior):
     """
 
     def __init__(self, data_model, params, tpts, **kwargs):
-        LogBase.__init__(self)
-        self.num_nodes = data_model.model_space.size
-        self.num_params = len(params)
+        Posterior.__init__(self, 0, data_model)
+        self.nvars = len(params)
 
         if kwargs.get("init", None) is not None:
             # Initial posterior provided
@@ -174,7 +216,7 @@ class MVNPosterior(Posterior):
             for idx, p in enumerate(params):
                 mean, var = None, None
                 if p.post_init is not None: # FIXME won't work if nodes != voxels
-                    mean, var = p.post_init(idx, tpts, data_model.data_space.srcdata.flat)
+                    mean, var = p.post_init(idx, data_model.data_space.srcdata.flat)
                     if mean is not None:
                         mean = p.post_dist.transform.int_values(mean, ns=tf.math)
                         print("Dataspace", idx, mean.shape, np.mean(mean), np.min(mean), np.max(mean))
@@ -185,9 +227,9 @@ class MVNPosterior(Posterior):
                         pass
 
                 if mean is None:
-                    mean = tf.fill((self.num_nodes, ), p.post_dist.mean)
+                    mean = tf.fill((self.nnodes, ), p.post_dist.mean)
                 if var is None:
-                    var = tf.fill((self.num_nodes, ), p.post_dist.var)
+                    var = tf.fill((self.nnodes, ), p.post_dist.var)
 
                 init_mean.append(tf.cast(mean, TF_DTYPE))
                 init_var.append(tf.cast(var, TF_DTYPE))
@@ -197,7 +239,7 @@ class MVNPosterior(Posterior):
             init_var = tf.stack(init_var, axis=-1)
             init_cov = tf.linalg.diag(init_var)
 
-        self.mean = tf.Variable(init_mean, dtype=TF_DTYPE, name="post_mean")
+        self.mean = tf.Variable(init_mean, dtype=TF_DTYPE)
         self.vars = [self.mean,]
 
         self.force_positive_var = kwargs.get("force_positive_var", False)
@@ -206,27 +248,26 @@ class MVNPosterior(Posterior):
             # SVB to ensure it is always positive definite. The analytic approach
             # guarantees this automatically (I think!)
             # FIXME Note that we are not initializing the off diag elements yet
-            self.log_var = tf.Variable(tf.math.log(init_var), name="post_log_var")
+            self.log_var = tf.Variable(tf.math.log(init_var))
             self.vars.append(self.log_var)
 
             init_cov_chol = tf.linalg.cholesky(init_cov)
-            self.off_diag_vars = tf.Variable(init_cov_chol, name="post_off_diag_cov")
+            self.off_diag_vars = tf.Variable(init_cov_chol)
             self.vars.append(self.off_diag_vars)
         else:
-            self.cov = tf.Variable(init_cov, dtype=TF_DTYPE, name="post_cov")
+            self.cov = tf.Variable(init_cov, dtype=TF_DTYPE)
             self.vars.append(self.cov)
 
     def build(self):
         if self.force_positive_var:
             self.var = tf.math.exp(self.log_var)
-            self.std = tf.math.sqrt(self.var)
-            self.std_diag = tf.linalg.diag(self.std)
+            std_diag = tf.linalg.diag(tf.math.sqrt(self.var))
 
-            self.off_diag_cov_chol = tf.linalg.set_diag(tf.linalg.band_part(self.off_diag_vars, -1, 0),
-                                                        tf.zeros([self.num_nodes, self.num_params]))
-            self.off_diag_cov_chol = self.off_diag_cov_chol
-            self.cov_chol = tf.add(self.std_diag, self.off_diag_cov_chol)
-            self.cov = tf.matmul(tf.transpose(self.cov_chol, perm=(0, 2, 1)), self.cov_chol)
+            off_diag_cov_chol = tf.linalg.set_diag(tf.linalg.band_part(self.off_diag_vars, -1, 0),
+                                                   tf.zeros([self.nnodes, self.nvars]))
+            off_diag_cov_chol = off_diag_cov_chol
+            cov_chol = tf.add(std_diag, off_diag_cov_chol)
+            self.cov = tf.matmul(tf.transpose(cov_chol, perm=(0, 2, 1)), cov_chol)
 
         self.prec = tf.linalg.inv(self.cov)
 
@@ -238,15 +279,15 @@ class MVNPosterior(Posterior):
 
         :return: Sequence of tuples: (variable, new value)
         """
-        s_model = avb.data_model.data_to_model(avb.noise_post.s) # [W]
-        c_model = avb.data_model.data_to_model(avb.noise_post.c) # [W]
-        k_model = avb.data_model.data_to_model(avb.k) # [W, T]
-        prec_new = tf.expand_dims(tf.expand_dims(s_model, -1), -1) * tf.expand_dims(tf.expand_dims(c_model, -1), -1) * avb.JtJ + avb.prior.prec
+        sc = avb.noise_post.s * avb.noise_post.c # [V]
+        sc_nodes = avb.data_model.data_to_model(sc) # [W]
+        k_nodes = avb.data_model.data_to_model(avb.k)
+        prec_new = tf.expand_dims(tf.expand_dims(sc_nodes, -1), -1) * avb.JtJ + avb.prior.prec # [W, P, P]
         cov_new = tf.linalg.inv(prec_new)
 
         t1 = tf.einsum("ijk,ik->ij", avb.J, self.mean) # [W]
-        t15 = tf.einsum("ijk,ik->ij", avb.Jt, (k_model + t1)) # [W, T]
-        t2 = tf.expand_dims(s_model, -1) * tf.expand_dims(c_model, -1) * t15 # [W, T]
+        t15 = tf.einsum("ijk,ik->ij", avb.Jt, (k_nodes + t1)) # [W, T]
+        t2 = tf.expand_dims(sc_nodes, -1) * t15 # [W, T]
         t3 = tf.einsum("ijk,ik->ij", avb.prior.prec, avb.prior.mean)
         mean_new = tf.einsum("ijk,ik->ij", cov_new, (t2 + t3))
 
@@ -272,7 +313,7 @@ class CombinedPosterior(LogBase):
 
         #cov_model_padded = tf.pad(self.model_post.cov, tf.constant([[0, 0], [0, 1], [0, 1]]))
         #cov_noise = tf.reshape(self.noise_post.var, (-1, 1, 1))
-        #cov_noise_padded = tf.pad(cov_noise, tf.constant([[0, 0], [self.model_post.num_params, 0], [self.model_post.num_params, 0]]))
+        #cov_noise_padded = tf.pad(cov_noise, tf.constant([[0, 0], [self.model_post.nvars, 0], [self.model_post.nvars, 0]]))
         #self.cov = cov_model_padded + cov_noise_padded
 
     def avb_update(self, avb):
