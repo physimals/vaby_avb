@@ -219,9 +219,7 @@ class MVNPosterior(Posterior):
                     mean, var = p.post_init(idx, data_model.data_space.srcdata.flat)
                     if mean is not None:
                         mean = p.post_dist.transform.int_values(mean, ns=tf.math)
-                        print("Dataspace", idx, mean.shape, np.mean(mean), np.min(mean), np.max(mean))
                         mean = data_model.data_to_model(mean)
-                        print("Modelspace", idx, mean.shape, np.mean(mean), np.min(mean), np.max(mean))
                     if var is not None:
                         # FIXME transform
                         pass
