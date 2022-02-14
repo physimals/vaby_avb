@@ -187,7 +187,7 @@ class Avb(InferenceMethod):
 
         Fparts_vox.append(
             -0.5*s*c*(
-                tf.squeeze(to_voxels(tf.expand_dims(tf.linalg.trace(tf.linalg.matmul(C, self.JtJ)), 1)), 1)
+                tf.squeeze(to_voxels(tf.expand_dims(tf.linalg.trace(tf.linalg.matmul(C, self.JtJ)), 1)), 1) # FIXME pv_scale
             )
         )
 
@@ -288,7 +288,7 @@ class Avb(InferenceMethod):
         self.noise_mean, self.noise_prec = self.noise_post.mean, self.noise_post.prec # [V], [V]
         self.noise_var = 1.0/self.noise_prec # [V]
         self.modelfit = self.fwd_model.evaluate(tf.expand_dims(self.model_mean, axis=-1), self.tpts) # [W, T]
-        self.modelfit_voxels = self.data_model.model_to_data(self.modelfit) # [V, T]
+        self.modelfit_voxels = self.data_model.model_to_data(self.modelfit, pv_scale=True) # [V, T]
         self.k = self.data - self.modelfit_voxels # [V, T]
 
     def _linearise(self):
@@ -379,5 +379,5 @@ class Avb(InferenceMethod):
         self.log.info("   - Variance: %s" % self.model_var.numpy().mean(1))
         self.log.info("   - Noise: %s" % np.sqrt(1/self.noise_mean.numpy()).mean())
         if self.prior.vars:
-            self.log.info("   - aks: %s" % [v.numpy().mean() for v in self.prior.vars])
+            self.log.info("   - aks: %s" % [v.numpy() for v in self.prior.vars])
         self.log.info("   - F: %.4g (Voxel: %.4g, Node: %.4g)" % (self.cost_fe.numpy(), self.free_energy_vox.numpy().mean(), self.free_energy_node.numpy().mean()))

@@ -18,9 +18,9 @@ def get_posterior(idx, param, data_model, **kwargs):
         initial_mean, initial_var = param.post_init(param, data_model.data_space.srcdata.flat)
 
         if initial_mean is not None:
-            initial_mean = data_model.data_to_model(initial_mean)
+            initial_mean = data_model.data_to_model(initial_mean, pv_scale=param.pv_scale)
         if initial_var is not None:
-            initial_var = data_model.data_to_model(initial_var)
+            initial_var = data_model.data_to_model(initial_var, pv_scale=param.pv_scale)
 
     # The size of the posterior (number of positions at which it is 
     # estimated) is determined by the data_space it refers to, and 
@@ -173,13 +173,13 @@ class NoisePosterior(Posterior):
         # FIXME need k (residuals) in voxel-space
         dmu = avb.orig_mean - avb.post.mean
         dk = tf.einsum("ijk,ik->ij", avb.J, dmu)
-        dk_data = avb.data_model.model_to_data(dk)
+        dk_data = avb.data_model.model_to_data(dk) # FIXME pv_scale?
         k = avb.k + dk_data # [V, T]
         t1 = 0.5 * tf.reduce_sum(tf.square(k), axis=-1) # [V]
         # FIXME need CJtJ in voxel-space?
         t15 = tf.matmul(avb.post.cov, avb.JtJ) # [W, P, P]
         t2 = 0.5 * tf.linalg.trace(t15) # [W]
-        t2_data = avb.data_model.model_to_data(t2) # [V]
+        t2_data = avb.data_model.model_to_data(t2) # FIXME pv_scale
         t0 = 1/avb.noise_prior.s # [V]
         s_new = 1/(t0 + t1 + t2_data)
 
@@ -219,7 +219,7 @@ class MVNPosterior(Posterior):
                     mean, var = p.post_init(idx, data_model.data_space.srcdata.flat)
                     if mean is not None:
                         mean = p.post_dist.transform.int_values(mean, ns=tf.math)
-                        mean = data_model.data_to_model(mean)
+                        mean = data_model.data_to_model(mean, pv_scale=p.pv_scale)
                     if var is not None:
                         # FIXME transform
                         pass
@@ -275,11 +275,13 @@ class MVNPosterior(Posterior):
 
         From section 4.2 of the FMRIB Variational Bayes Tutorial I
 
+        FIXME use of pv_scale?
+
         :return: Sequence of tuples: (variable, new value)
         """
         sc = avb.noise_post.s * avb.noise_post.c # [V]
-        sc_nodes = avb.data_model.data_to_model(sc) # [W]
-        k_nodes = avb.data_model.data_to_model(avb.k)
+        sc_nodes = avb.data_model.data_to_model(sc, pv_scale=True) # [W]
+        k_nodes = avb.data_model.data_to_model(avb.k, pv_scale=True)
         prec_new = tf.expand_dims(tf.expand_dims(sc_nodes, -1), -1) * avb.JtJ + avb.prior.prec # [W, P, P]
         cov_new = tf.linalg.inv(prec_new)
 

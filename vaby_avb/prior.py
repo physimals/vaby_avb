@@ -5,7 +5,7 @@ VABY_AVB: Parameter priors
 import numpy as np
 import tensorflow as tf
 
-from vaby.utils import LogBase, TF_DTYPE, NP_DTYPE
+from vaby.utils import LogBase, TF_DTYPE, NP_DTYPE, scipy_to_tf_sparse
 from vaby.dist import Normal
 
 def get_prior(idx, param, data_model, **kwargs):
@@ -123,7 +123,7 @@ class MRFSpatialPrior(ParameterPrior):
         self.log.debug("gamma q2", self.q2)
 
         # Laplacian matrix
-        self.laplacian = data_model.model_space.laplacian
+        self.laplacian = scipy_to_tf_sparse(data_model.model_space.laplacian)
 
         # Laplacian matrix with diagonal zeroed
         offdiag_mask = self.laplacian.indices[:, 0] != self.laplacian.indices[:, 1]
