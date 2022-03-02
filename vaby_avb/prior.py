@@ -102,7 +102,7 @@ class NormalPrior(ParameterPrior):
 
         self.mean = tf.fill([self.size], NP_DTYPE(self.scalar_mean))
         self.var = tf.fill([self.size], NP_DTYPE(self.scalar_var))
-        self.vars = []
+        self.vars = {}
 
     def __str__(self):
         return "Non-spatial prior (%f, %f)" % (self.scalar_mean, self.scalar_var)
@@ -144,10 +144,10 @@ class MRFSpatialPrior(ParameterPrior):
         ak_init = tf.fill([self.num_aks], NP_DTYPE(kwargs.get("ak", 1e-5)))
         if kwargs.get("infer_ak", True):
             self.log_ak = tf.Variable(np.log(ak_init), dtype=TF_DTYPE)
-            self.vars = [self.log_ak]
+            self.vars = {"log_ak" : self.log_ak}
         else:
             self.log_ak = tf.constant(np.log(ak_init), dtype=TF_DTYPE)
-            self.vars = []
+            self.vars = {}
 
         #self.mean = tf.fill((self.size,), 0.0)
         #self.var = tf.fill((self.size,), 1/ak_init)
@@ -266,7 +266,7 @@ class ARDPrior(ParameterPrior):
         # FIXME should we use hardcoded default_phi or the supplied variance?
         default_phi = np.full((self.size, ), np.log(1e-12))
         self.log_phi = tf.Variable(default_phi, dtype=TF_DTYPE)
-        self.vars = [self.log_phi]
+        self.vars = {"log_phi" : self.log_phi}
 
     def __str__(self):
         return "ARD prior"
@@ -316,7 +316,7 @@ class NoisePrior(LogBase):
         self.mean = self.c*self.s
         self.var = self.s*self.s*self.c
         self.prec = 1/self.var
-        self.vars = []
+        self.vars = {}
 
 class MVNPrior(LogBase):
     """
@@ -348,7 +348,10 @@ class MVNPrior(LogBase):
         self.var = tf.stack([p.var for p in self.param_priors], axis=1)
         self.cov = tf.linalg.diag(self.var)
         self.prec = tf.linalg.inv(self.cov)
-        self.vars = sum([p.vars for p in self.param_priors], [])
+        self.vars = {}
+        for p in self.param_priors:
+            for name, var in p.vars.items():
+                self.vars[f"{name}_{p.idx}"] = var
 
     def avb_update(self, avb):
         """

@@ -374,10 +374,11 @@ class Avb(InferenceMethod):
 
         self.log.info(" - Iteration %04d" % iter)
         means_by_struc = self.data_model.model_space.split(self.model_mean, axis=1)
-        for name, means in means_by_struc.items():
-            self.log.info("   - %s mean: %s" % (name, means.numpy().mean(1)))
-        self.log.info("   - Variance: %s" % self.model_var.numpy().mean(1))
-        self.log.info("   - Noise: %s" % np.sqrt(1/self.noise_mean.numpy()).mean())
-        if self.prior.vars:
-            self.log.info("   - aks: %s" % [v.numpy() for v in self.prior.vars])
+        vars_by_struc = self.data_model.model_space.split(self.model_var, axis=1)
+        for name, mean in means_by_struc.items():
+            self.log.info("   - %s mean: %s" % (name, mean.numpy().mean(1)))
+        for name, var in vars_by_struc.items():
+            self.log.info("   - %s variance: %s" % (name, var.numpy().mean(1)))
+        for name, var in self.prior.vars.items():
+            self.log.info(f"   - {name}: %s" % var.numpy())
         self.log.info("   - F: %.4g (Voxel: %.4g, Node: %.4g)" % (self.cost_fe.numpy(), self.free_energy_vox.numpy().mean(), self.free_energy_node.numpy().mean()))
