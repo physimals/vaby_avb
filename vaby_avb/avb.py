@@ -37,7 +37,7 @@ class Avb(InferenceMethod):
         self.history = {}
         self._create_prior_post(**kwargs)
 
-        method = kwargs.pop("method", "analytic")
+        method = kwargs.pop("avb_method", "analytic")
         if method == "leastsq":
             self._run_leastsq(**kwargs)
         elif method == "maxf":
@@ -311,9 +311,15 @@ class Avb(InferenceMethod):
         self.all_post.build()
         self._linearise()
         self._evaluate()
-        self.cost_free_energy()
+        self._cost_free_energy()
         self.cost_lsq = tf.reduce_sum(tf.square(self.k), axis=-1)
         return self.cost_lsq
+
+    def _all_vars(self):
+        return (
+            self.all_post.vars +
+            list(self.prior.vars.values())
+        )
 
     def _run_leastsq(self, max_iterations=10, record_history=False, **kwargs):
         self.log.info("Doing least squares optimization")
@@ -322,10 +328,10 @@ class Avb(InferenceMethod):
             with tf.GradientTape(persistent=False) as t:
                 # Loss function
                 self.cost = self._cost_leastsq()
-            gradients = t.gradient(self.cost, self.all_post.vars)
+            gradients = t.gradient(self.cost, self._all_vars())
 
             # Apply the gradient
-            optimizer.apply_gradients(zip(gradients, self.all_post.vars))
+            optimizer.apply_gradients(zip(gradients, self._all_vars()))
             self._log_iter(idx+1, record_history)
 
     def _run_maxf(self, max_iterations=10, record_history=False, **kwargs):
@@ -335,10 +341,10 @@ class Avb(InferenceMethod):
             with tf.GradientTape(persistent=False) as t:
                 # Loss function
                 self.cost = self._cost_free_energy()
-            gradients = t.gradient(self.cost, self.all_post.vars)
+            gradients = t.gradient(self.cost, self._all_vars())
 
             # Apply the gradient
-            optimizer.apply_gradients(zip(gradients, self.all_post.vars))
+            optimizer.apply_gradients(zip(gradients, self._all_vars()))
             self._log_iter(idx+1, record_history)
 
     def _run_analytic(self, max_iterations=10, record_history=False, progress_cb=None, **kwargs):
@@ -381,4 +387,5 @@ class Avb(InferenceMethod):
             self.log.info("   - %s variance: %s" % (name, var.numpy().mean(1)))
         for name, var in self.prior.vars.items():
             self.log.info(f"   - {name}: %s" % var.numpy())
+        self.log.info("   - Noise mean: %.4g variance: %.4g" % (self.noise_mean.numpy().mean(), self.noise_var.numpy().mean()))
         self.log.info("   - F: %.4g (Voxel: %.4g, Node: %.4g)" % (self.cost_fe.numpy(), self.free_energy_vox.numpy().mean(), self.free_energy_node.numpy().mean()))
