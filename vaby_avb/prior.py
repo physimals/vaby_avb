@@ -142,7 +142,8 @@ class MRFSpatialPrior(ParameterPrior):
         self.sub_strucs = data_model.model_space.parts
         self.slices = data_model.model_space.slices
         ak_init = tf.fill([self.num_aks], NP_DTYPE(kwargs.get("ak", 1e-5)))
-        if kwargs.get("infer_ak", True):
+        self.infer_ak = kwargs.get("infer_ak", True)
+        if self.infer_ak:
             self.log_ak = tf.Variable(np.log(ak_init), dtype=TF_DTYPE)
             self.vars = {"log_ak" : self.log_ak}
         else:
@@ -191,6 +192,10 @@ class MRFSpatialPrior(ParameterPrior):
         :param post: Current posterior
         :return: Sequence of tuples: (variable to update, tensor to update from)
         """
+        if not self.infer_ak:
+            self.build(avb.post)
+            return
+
         # Posterior variance for parameter [W]
         sigmaK = avb.post.cov[:, self.idx, self.idx]
 
