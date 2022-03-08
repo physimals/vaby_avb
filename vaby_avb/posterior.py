@@ -17,11 +17,6 @@ def get_posterior(idx, param, data_model, **kwargs):
     if param.post_init is not None:
         initial_mean, initial_var = param.post_init(param, data_model.data_space.srcdata.flat)
 
-        if initial_mean is not None:
-            initial_mean = data_model.data_to_model(initial_mean, pv_scale=param.pv_scale)
-        if initial_var is not None:
-            initial_var = data_model.data_to_model(initial_var, pv_scale=param.pv_scale)
-
     # The size of the posterior (number of positions at which it is 
     # estimated) is determined by the data_space it refers to, and 
     # in turn by the data model. If it is global, the reduction will
@@ -171,15 +166,28 @@ class NoisePosterior(Posterior):
         """
         c_new = tf.fill((avb.n_voxels,), (NP_DTYPE(avb.n_tpts) - 1)/2 + avb.noise_prior.c)
         # FIXME need k (residuals) in voxel-space
-        dmu = avb.orig_mean - avb.post.mean
-        dk = tf.einsum("ijk,ik->ij", avb.J, dmu)
-        dk_data = avb.data_model.model_to_data(dk) # FIXME pv_scale?
+        dmu = avb.orig_mean - avb.post.mean # [W, P]
+        dk = tf.einsum("ijk,ik->ij", avb.J, dmu) # [W, T]
+        # pv_scale=True because this is a difference in model prediction
+        # which is image intensity
+        dk_data = avb.data_model.model_to_data(dk, pv_scale=True)
         k = avb.k + dk_data # [V, T]
         t1 = 0.5 * tf.reduce_sum(tf.square(k), axis=-1) # [V]
         # FIXME need CJtJ in voxel-space?
         t15 = tf.matmul(avb.post.cov, avb.JtJ) # [W, P, P]
-        t2 = 0.5 * tf.linalg.trace(t15) # [W]
-        t2_data = avb.data_model.model_to_data(t2) # FIXME pv_scale
+        t2_data = None
+        for idx, p in enumerate(avb.fwd_model.params):
+            t2_data_p = 0.5 * avb.data_model.model_to_data(t15[:, idx, idx], pv_scale=p.pv_scale)
+                
+            if t2_data is None:
+                t2_data = t2_data_p
+            else:
+                t2_data += t2_data_p
+
+        #t2 = 0.5 * tf.linalg.trace(t15) # [W]
+        # FIXME pv_scale here? Is this per-parameter? And should model_to_data
+        # be called before the trace???
+        #t2_data = avb.data_model.model_to_data(t2)
         t0 = 1/avb.noise_prior.s # [V]
         s_new = 1/(t0 + t1 + t2_data)
 
@@ -219,7 +227,6 @@ class MVNPosterior(Posterior):
                     mean, var = p.post_init(idx, data_model.data_space.srcdata.flat)
                     if mean is not None:
                         mean = p.post_dist.transform.int_values(mean, ns=tf.math)
-                        mean = data_model.data_to_model(mean, pv_scale=p.pv_scale)
                     if var is not None:
                         # FIXME transform
                         pass
@@ -280,6 +287,8 @@ class MVNPosterior(Posterior):
         :return: Sequence of tuples: (variable, new value)
         """
         sc = avb.noise_post.s * avb.noise_post.c # [V]
+        # pv_scale=True because this is about comparing noise magnitude with
+        # residuals both of which scale with PV?
         sc_nodes = avb.data_model.data_to_model(sc, pv_scale=True) # [W]
         k_nodes = avb.data_model.data_to_model(avb.k, pv_scale=True)
         prec_new = tf.expand_dims(tf.expand_dims(sc_nodes, -1), -1) * avb.JtJ + avb.prior.prec # [W, P, P]
