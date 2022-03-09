@@ -382,9 +382,8 @@ class Avb(InferenceMethod):
         means_by_struc = self.data_model.model_space.split(self.model_mean, axis=1)
         vars_by_struc = self.data_model.model_space.split(self.model_var, axis=1)
         for name, mean in means_by_struc.items():
-            self.log.info("   - %s mean: %s" % (name, mean.numpy().mean(1)))
-        for name, var in vars_by_struc.items():
-            self.log.info("   - %s variance: %s" % (name, var.numpy().mean(1)))
+            var = vars_by_struc[name]
+            self.log.info("   - %s mean: %s variance: %s" % (name, mean.numpy().mean(1), var.numpy().mean(1)))
         for name, var in self.prior.vars.items():
             self.log.info(f"   - {name}: %s" % var.numpy())
         self.log.info("   - Noise mean: %.4g variance: %.4g" % (self.noise_mean.numpy().mean(), self.noise_var.numpy().mean()))
