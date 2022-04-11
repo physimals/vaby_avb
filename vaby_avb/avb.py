@@ -383,8 +383,8 @@ class Avb(InferenceMethod):
         vars_by_struc = self.data_model.model_space.split(self.model_var, axis=1)
         for name, mean in means_by_struc.items():
             var = vars_by_struc[name]
-            self.log.info("   - %s mean: %s variance: %s" % (name, mean.numpy().mean(1), var.numpy().mean(1)))
+            self.log.info("   - %s mean: %s variance: %s" % (name, self.log_avg(mean.numpy(), axis=1), self.log_avg(var.numpy(), axis=1)))
         for name, var in self.prior.vars.items():
             self.log.info(f"   - {name}: %s" % var.numpy())
-        self.log.info("   - Noise mean: %.4g variance: %.4g" % (self.noise_mean.numpy().mean(), self.noise_var.numpy().mean()))
-        self.log.info("   - F: %.4g (Voxel: %.4g, Node: %.4g)" % (self.cost_fe.numpy(), self.free_energy_vox.numpy().mean(), self.free_energy_node.numpy().mean()))
+        self.log.info("   - Noise mean: %.4g variance: %.4g" % (self.log_avg(self.noise_mean.numpy()), self.log_avg(self.noise_var.numpy())))
+        self.log.info("   - F: %.4g (Voxel: %.4g, Node: %.4g)" % (self.cost_fe.numpy(), self.log_avg(self.free_energy_vox.numpy()), self.log_avg(self.free_energy_node.numpy())))
