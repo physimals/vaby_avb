@@ -53,7 +53,11 @@ class Avb(InferenceMethod):
                 trans_axes = list(range(1, item_history[0].ndim+1)) + [0,]
                 self.history[item] = np.array(item_history).transpose(trans_axes)
 
-        self.finalize()
+        state = {}
+        for attr in ("model_mean", "model_var", "noise_mean", "noise_var", "modelfit"):
+            if hasattr(self, attr):
+               state[attr] = getattr(self, attr).numpy()
+        return state
 
     def _debug_output(self, text):
         self.log.debug(text)
@@ -165,7 +169,6 @@ class Avb(InferenceMethod):
         C = self.post.cov
         m = self.post.mean
         m0 = self.prior.mean
-        to_voxels = self.data_model.model_to_data
 
         Fparts_vox = []
         Fparts_node = []
@@ -187,7 +190,7 @@ class Avb(InferenceMethod):
 
         Fparts_vox.append(
             -0.5*s*c*(
-                tf.squeeze(to_voxels(tf.expand_dims(tf.linalg.trace(tf.linalg.matmul(C, self.JtJ)), 1)), 1) # FIXME pv_scale
+                tf.squeeze(self.data_model.model_to_data(tf.expand_dims(tf.linalg.trace(tf.linalg.matmul(C, self.JtJ)), 1), pv_scale=True), 1) # FIXME pv_scale
             )
         )
 
@@ -293,9 +296,9 @@ class Avb(InferenceMethod):
 
     def _linearise(self):
         self.J = self._jacobian() # [W, T, P]
-        #self.J = self._jacobian_autodiff() # [V, T, P]
-        self.Jt = tf.transpose(self.J, (0, 2, 1)) # [V, P, T]
-        self.JtJ = tf.linalg.matmul(self.Jt, self.J) # [V, P, P]
+        #self.J = self._jacobian_autodiff() # [W, T, P]
+        self.Jt = tf.transpose(self.J, (0, 2, 1)) # [W, P, T]
+        self.JtJ = tf.linalg.matmul(self.Jt, self.J) # [W, P, P]
 
     def _cost_free_energy(self):
         self.prior.build(self.post)
