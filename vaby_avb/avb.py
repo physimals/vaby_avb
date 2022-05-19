@@ -11,10 +11,10 @@ import math
 import numpy as np
 import tensorflow as tf
 
-from vaby.utils import InferenceMethod, TF_DTYPE
+from vaby import InferenceMethod, TF_DTYPE
 
 from .prior import MVNPrior, NoisePrior, get_prior
-from .posterior import MVNPosterior, NoisePosterior, CombinedPosterior
+from .posterior import MVNPosterior, NoisePosterior
 
 class Avb(InferenceMethod):
     """
@@ -54,7 +54,7 @@ class Avb(InferenceMethod):
                 self.history[item] = np.array(item_history).transpose(trans_axes)
 
         state = {}
-        for attr in ("model_mean", "model_var", "noise_mean", "noise_var", "modelfit"):
+        for attr in ("model_mean", "model_var", "noise_mean", "noise_var", "post_mean", "post_cov", "modelfit"):
             if hasattr(self, attr):
                state[attr] = getattr(self, attr).numpy()
         return state
@@ -258,8 +258,8 @@ class Avb(InferenceMethod):
     def _create_prior_post(self, **kwargs):
         # Set up prior and posterior
         #self.tpts = tf.constant(self.tpts, dtype=TF_DTYPE) # FIXME
-        self.noise_post = NoisePosterior(self.data_model, force_positive=kwargs.get("use_adam", False), init=self.data_model.post_init)
-        self.post = MVNPosterior(self.data_model, self.fwd_model.params, self.tpts, init=self.data_model.post_init, **kwargs)
+        self.noise_post = NoisePosterior(self.data_model, force_positive=kwargs.get("use_adam", False), **kwargs)
+        self.post = MVNPosterior(self.data_model, self.fwd_model.params, self.tpts, **kwargs)
 
         self.noise_prior = NoisePrior(s=kwargs.get("noise_s0", 1e6), c=kwargs.get("noise_c0", 1e-6))
         self.param_priors = [
@@ -267,9 +267,6 @@ class Avb(InferenceMethod):
             for idx, p in enumerate(self.fwd_model.params)
         ]
         self.prior = MVNPrior(self.param_priors)
-
-        # Combined parameter/noise posterior for output only
-        self.all_post = CombinedPosterior(self.post, self.noise_post)
 
         # Report summary of parameters
         for idx, param in enumerate(self.fwd_model.params):
@@ -286,6 +283,8 @@ class Avb(InferenceMethod):
 
     def _evaluate(self):
         mean_trans = tf.transpose(self.post.mean, (1, 0)) # [P, W]
+        self.post_mean = self.post.mean
+        self.post_cov = self.post.cov
         self.model_mean = self._inference_to_model(mean_trans) # [P, W]
         self.model_var = tf.stack([self.post.cov[:, v, v] for v in range(len(self.fwd_model.params))]) # [P, W] FIXME transform
         self.noise_mean, self.noise_prec = self.noise_post.mean, self.noise_post.prec # [V], [V]
@@ -301,8 +300,9 @@ class Avb(InferenceMethod):
         self.JtJ = tf.linalg.matmul(self.Jt, self.J) # [W, P, P]
 
     def _cost_free_energy(self):
+        self.post.build()
+        self.noise_post.build()
         self.prior.build(self.post)
-        self.all_post.build()
         self._linearise()
         self._evaluate()
         self.free_energy_vox, self.free_energy_node = self._free_energy()
@@ -310,8 +310,9 @@ class Avb(InferenceMethod):
         return self.cost_fe
 
     def _cost_leastsq(self):
+        self.post.build()
+        self.noise_post.build()
         self.prior.build(self.post)
-        self.all_post.build()
         self._linearise()
         self._evaluate()
         self._cost_free_energy()
@@ -320,7 +321,8 @@ class Avb(InferenceMethod):
 
     def _all_vars(self):
         return (
-            self.all_post.vars +
+            self.post.vars +
+            self.noise_post.vars +
             list(self.prior.vars.values())
         )
 

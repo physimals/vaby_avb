@@ -117,10 +117,10 @@ class MRFSpatialPrior(ParameterPrior):
         """
         """
         ParameterPrior.__init__(self, data_model, idx)
-        self.q1 = kwargs.get('gamma_q1', 1.0)
-        self.q2 = kwargs.get('gamma_q2', 10)
-        self.log.debug("gamma q1", self.q1)
-        self.log.debug("gamma q2", self.q2)
+        self.scale = kwargs.get('gamma_scale', 10.0)
+        self.shape = kwargs.get('gamma_shape', 1.0)
+        self.log.debug("gamma scale", self.scale)
+        self.log.debug("gamma shape", self.shape)
 
         # Laplacian matrix
         self.laplacian = scipy_to_tf_sparse(data_model.model_space.laplacian)
@@ -142,6 +142,7 @@ class MRFSpatialPrior(ParameterPrior):
         self.sub_strucs = data_model.model_space.parts
         self.slices = data_model.model_space.slices
         ak_init = tf.fill([self.num_aks], NP_DTYPE(kwargs.get("ak", 1e-5)))
+        #ak_init = [float(v) for v in kwargs.get("ak", "1e-5").split()]
         self.infer_ak = kwargs.get("infer_ak", True)
         if self.infer_ak:
             self.log_ak = tf.Variable(np.log(ak_init), dtype=TF_DTYPE)
@@ -150,21 +151,19 @@ class MRFSpatialPrior(ParameterPrior):
             self.log_ak = tf.constant(np.log(ak_init), dtype=TF_DTYPE)
             self.vars = {}
 
-        #self.mean = tf.fill((self.size,), 0.0)
-        #self.var = tf.fill((self.size,), 1/ak_init)
-
     def __str__(self):
         return "MRF spatial prior"
 
     def build(self, post):
         """
-        self.ak is a nodewise tensor containing the relevant ak for each node
+        self.ak_nodewise is a nodewise tensor containing the relevant ak for each node
         (one per sub-structure)
         """
-        aks_nodewise = []
+        log_aks_nodewise = []
         for struc_idx, struc in enumerate(self.sub_strucs):
-            aks_nodewise.append(tf.fill([struc.size], tf.exp(self.log_ak[struc_idx])))
-        self.ak = tf.concat(aks_nodewise, 0) # [W]
+            log_aks_nodewise.append(tf.fill([struc.size], self.log_ak[struc_idx]))
+        self.log_ak_nodewise = tf.concat(log_aks_nodewise, 0) # [W]
+        self.ak_nodewise = tf.exp(self.log_ak_nodewise)
 
         # For the spatial mean we essentially need the (weighted) average of 
         # nearest neighbour mean values. This does not involve the current posterior
@@ -175,7 +174,7 @@ class MRFSpatialPrior(ParameterPrior):
         spatial_mean = tf.sparse.sparse_dense_matmul(self.laplacian_nodiag, node_mean) # [W]
         spatial_mean = tf.squeeze(spatial_mean, 1)
         spatial_mean = spatial_mean / node_nn_total_weight # [W]
-        spatial_prec = node_nn_total_weight * self.ak # [W]
+        spatial_prec = node_nn_total_weight * self.ak_nodewise # [W]
 
         #self.var = 1 / (1/init_variance + spatial_prec)
         self.var = 1 / spatial_prec # [W]
@@ -183,7 +182,7 @@ class MRFSpatialPrior(ParameterPrior):
 
     def avb_update(self, avb):
         """
-        Update the global spatial precision when using analytic update mode
+        Update the ak variable when using analytic update mode
 
         Penny et al 2005 Fig 4 (Spatial Precisions)
 
@@ -224,36 +223,35 @@ class MRFSpatialPrior(ParameterPrior):
 
         # Fig 4 in Penny (2005) update equations for gK, hK and aK
         # Following Penny, prior on aK is a relatively uninformative gamma distribution with 
-        # q1 = 10 (1/q1 = 0.1) and q2 = 1.0
+        # scale = 10 (1/scale = 0.1) and shape = 1.0
         # FIXME for multiple aks, gk, hk shape [T]
-        gk = 1 / (0.5 * trace_term + 0.5 * term2 + 0.1)
-        hK = self.size * 0.5 + 1.0
-        aK = gk * hK # [T]
+        gk = 1 / (0.5 * trace_term + 0.5 * term2 + 1/self.scale)
+        hK = self.size * 0.5 + self.shape
+        ak_new = gk * hK # [T]
 
         # Checks below are from Fabber - unsure if required
         #
-        #if aK < 1e-50:
+        #if ak_new < 1e-50:
         #    // Don't let aK get too small
         #    LOG << "SpatialPrior::Calculate aK " << m_idx << ": was " << aK << endl;
         #    WARN_ONCE("SpatialPrior::Calculate aK - value was tiny - fixing to 1e-50");
-        #    aK = 1e-50;
+        #    ak_new = 1e-50;
 
         # Controls the speed of changes to aK - unsure whether this is useful or not but
         # it is only used if m_spatial_speed is given as an option
 
         # FIXME default for m_spatial_speed is -1 so code below will always be executed - 
         # harmless but potentially confusing
-        #aKMax = aK * m_spatial_speed;
+        #aKMax = ak_new * m_spatial_speed;
         #if aKMax < 0.5:
         #    # totally the wrong scaling.. oh well
         #    aKMax = 0.5
 
-        #if m_spatial_speed > 0 and aK > aKMax:
-        #    self.log.warn("MRFSpatialPrior::Calculate aK %i: Rate-limiting the increase on aK: was %e, now %e", self.idx, ak, akMax)
-        #    aK = aKMax
+        #if m_spatial_speed > 0 and ak_new > aKMax:
+        #    self.log.warn("MRFSpatialPrior::Calculate aK %i: Rate-limiting the increase on ak_new: was %e, now %e", self.idx, ak, akMax)
+        #    ak_new = aKMax
 
-        #self.log.info("MRFSpatialPrior::Calculate aK %i: New aK: %e", self.idx, ak)
-        self.log_ak.assign(tf.reshape(tf.math.log(aK), [-1]))
+        self.log_ak.assign(tf.reshape(tf.math.log(ak_new), [-1]))
         self.build(avb.post)
 
 class ARDPrior(ParameterPrior):

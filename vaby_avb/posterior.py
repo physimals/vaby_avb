@@ -67,6 +67,10 @@ class Posterior(LogBase):
         self.nnodes = data_model.model_space.size
         self.nvars = 1
 
+        # Small multiple of identity used to help invert near-singular matrices
+        self._inv_epsilon = 1e-5
+        self._inv_helper = self._inv_epsilon * np.eye(self.nvars, dtype=NP_DTYPE)
+
     def build(self):
         """
         Define tensors that depend on Variables in the posterior
@@ -123,20 +127,16 @@ class NoisePosterior(Posterior):
     :attr c: Noise gamma distribution prior shape parameter [V]
     """
 
-    def __init__(self, data_model, **kwargs):
+    def __init__(self, data_model, initial_noise=None, **kwargs):
         LogBase.__init__(self)
         nv = data_model.data_space.size
 
-        if kwargs.get("init", None) is not None:
-            # Initial posterior provided
-            # This will be a full set of means and covariances
-            # and will include the noise component
+        if initial_noise is not None:
+            # Initial noise provided
             self.log.info("Initializing noise from previous run")
-            init_mean, init_cov = kwargs["init"]
-            init_mean = init_mean[:, -1]
-            init_var = init_cov[:, -1, -1]
-            init_s = init_var / init_mean
-            init_c = init_mean / init_s
+            init_mean, init_var = data_model.decode_posterior(initial_noise)
+            init_s = np.squeeze(init_var) / np.squeeze(init_mean)
+            init_c = np.squeeze(init_mean) / init_s
         else:
             init_s = kwargs.get("s", 1e-8)
             init_c = kwargs.get("c", 50.0)
@@ -203,18 +203,16 @@ class MVNPosterior(Posterior):
     :attr prec: precision matrix [W, P, P]
     """
 
-    def __init__(self, data_model, params, tpts, **kwargs):
+    def __init__(self, data_model, params, tpts, initial_posterior=None, **kwargs):
         Posterior.__init__(self, 0, data_model)
         self.nvars = len(params)
 
-        if kwargs.get("init", None) is not None:
+        if initial_posterior is not None:
             # Initial posterior provided
-            # This will be a full set of means and covariances
-            # and will include the noise component
+            # This will be an encoded set of means and covariances
+            # but will not include the noise component
             self.log.info("Initializing posterior from previous run")
-            init_mean, init_cov = kwargs["init"]
-            init_mean = init_mean[:, :-1]
-            init_cov = init_cov[:, :-1, :-1]
+            init_mean, init_cov = self.data_model.decode_posterior(initial_posterior)
             init_var = tf.linalg.diag_part(init_cov)
         else:
             # Parameters provide initial mean and variance
@@ -273,8 +271,10 @@ class MVNPosterior(Posterior):
             off_diag_cov_chol = off_diag_cov_chol
             cov_chol = tf.add(std_diag, off_diag_cov_chol)
             self.cov = tf.matmul(tf.transpose(cov_chol, perm=(0, 2, 1)), cov_chol)
-
-        self.prec = tf.linalg.inv(self.cov)
+        try:
+            self.prec = tf.linalg.inv(self.cov)
+        except:
+            self.prec = tf.linalg.inv(self.cov + self._inv_helper)
 
     def avb_update(self, avb):
         """
@@ -292,7 +292,10 @@ class MVNPosterior(Posterior):
         sc_nodes = avb.data_model.data_to_model(sc, pv_scale=True) # [W]
         k_nodes = avb.data_model.data_to_model(avb.k, pv_scale=True)
         prec_new = tf.expand_dims(tf.expand_dims(sc_nodes, -1), -1) * avb.JtJ + avb.prior.prec # [W, P, P]
-        cov_new = tf.linalg.inv(prec_new)
+        try:
+            cov_new = tf.linalg.inv(prec_new)
+        except:
+            self.prec = tf.linalg.inv(self.cov + self._inv_helper)
 
         t1 = tf.einsum("ijk,ik->ij", avb.J, self.mean) # [W]
         t15 = tf.einsum("ijk,ik->ij", avb.Jt, (k_nodes + t1)) # [W, T]
@@ -303,28 +306,3 @@ class MVNPosterior(Posterior):
         self.mean.assign(mean_new)
         self.cov.assign(cov_new)
 
-class CombinedPosterior(LogBase):
-    """
-    Represents the parameter posterior and the noise posterior as a single
-    distribution for input/output purposes
-    """
-    def __init__(self, model_post, noise_post):
-        self.model_post = model_post
-        self.noise_post = noise_post
-        self.vars = self.model_post.vars + self.noise_post.vars
-
-    def build(self):
-        self.model_post.build()
-        self.noise_post.build()
-
-        # FIXME in surface mode noise not on nodes and this will not work
-        #self.mean = tf.concat([self.model_post.mean, tf.reshape(self.noise_post.mean, (-1, 1))], axis=1)
-
-        #cov_model_padded = tf.pad(self.model_post.cov, tf.constant([[0, 0], [0, 1], [0, 1]]))
-        #cov_noise = tf.reshape(self.noise_post.var, (-1, 1, 1))
-        #cov_noise_padded = tf.pad(cov_noise, tf.constant([[0, 0], [self.model_post.nvars, 0], [self.model_post.nvars, 0]]))
-        #self.cov = cov_model_padded + cov_noise_padded
-
-    def avb_update(self, avb):
-        self.model_post.avb_update(avb)
-        self.noise_post.avb_update(avb)
