@@ -1,4 +1,4 @@
-vaby
+vaby>=0.2
 tensorflow
 numpy
 nibabel
