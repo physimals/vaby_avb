@@ -212,7 +212,7 @@ class MVNPosterior(Posterior):
             # This will be an encoded set of means and covariances
             # but will not include the noise component
             self.log.info("Initializing posterior from previous run")
-            init_mean, init_cov = self.data_model.decode_posterior(initial_posterior)
+            init_mean, init_cov = self.data_model.decode_posterior(initial_posterior, **kwargs)
             init_var = tf.linalg.diag_part(init_cov)
         else:
             # Parameters provide initial mean and variance
